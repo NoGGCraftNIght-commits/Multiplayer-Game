@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { stdMat } from './gfx.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
@@ -61,9 +62,9 @@ const GUNS = [
     ['b', 0, 0.01, 0.006, 0.06, 0, 0, 0.05], ['c', 2, 0.03, 0.03, 0.03, 0, 0.085, 0.595]] },
 ];
 const GUN_MATS = [
-  new THREE.MeshStandardMaterial({ color: 0x1b1d20, roughness: 0.72 }),
-  new THREE.MeshStandardMaterial({ color: 0x34373c, metalness: 0.85, roughness: 0.36 }),
-  new THREE.MeshStandardMaterial({ color: 0xff6a00, roughness: 0.5 }),
+  stdMat({ color: 0x1b1d20, roughness: 0.72 }),
+  stdMat({ color: 0x34373c, metalness: 0.85, roughness: 0.36 }),
+  stdMat({ color: 0xff6a00, roughness: 0.5 }),
 ];
 
 // Teile je Material zu einer Geometrie verschmelzen (3 Draw Calls je Blaster)

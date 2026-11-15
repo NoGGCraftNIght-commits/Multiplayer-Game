@@ -54,25 +54,22 @@
         <button id="play" class="primary">Spielen</button>
         <p id="menuError" class="error" role="alert"></p>
         <details id="advanced">
-          <summary>Server &amp; Grafik</summary>
+          <summary>Server</summary>
           <label class="lbl" for="serverUrl">Server-Adresse</label>
           <input id="serverUrl" placeholder="https://mein-server.example.com" inputmode="url">
-          <div class="settings-slot"></div>
         </details>
       </div>
     </div>
+    <section class="gfx" aria-label="Grafik"><div class="settings-slot"></div></section>
     <p class="hint-small">PC/Chromebook: WASD · Maus oder Trackpad (auch Pfeiltasten) · Klick oder V = Spritzen · Rechtsklick oder C = Zielen · F = Einsteigen · E = Hallo · Tab halten = Waffenrad · L = Punkte<br>Tablet/Handy: Stick links · Wischen rechts · Tasten rechts – wird automatisch erkannt</p>
   </div>
 </div>
 
 <!-- Einstellungen (wird ins Menü / Pausenmenü verschoben) -->
 <div id="settings" class="settings">
-  <label class="lbl" for="quality">Qualität</label>
-  <select id="quality">
-    <option value="low">Niedrig (Handy/Tablet)</option>
-    <option value="medium">Mittel</option>
-    <option value="high">Hoch</option>
-  </select>
+  <span class="lbl" id="qualityLbl">Shader</span>
+  <div id="quality" class="shaders" role="radiogroup" aria-labelledby="qualityLbl"></div>
+  <p id="qualityNote" class="note"></p>
   <label class="lbl" for="style">Grafikstil</label>
   <select id="style">
     <option value="lowpoly">Low-Poly (bunt, stilisiert)</option>

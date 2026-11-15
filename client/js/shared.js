@@ -73,22 +73,50 @@ export const LANE = 2.3;        // Fahrspur-Versatz von der Mittellinie (Rechtsv
 export const roadCenter = (i) => -HALF + ROAD / 2 + i * CELL;            // i = 0..GRID
 export const blockMin = (i) => -HALF + ROAD + i * CELL;                  // i = 0..GRID-1
 
+// Fluss: Betonkanal quer durch Blockreihe RIVER_ROW (Uferpromenade, schräge Böschung, hüfttiefes Wasser).
+// Die Nord-Süd-Straßen queren ihn auf Brücken; an JUMPS fehlt die Brücke: dort Sprungrampen, Verkehr fährt nicht hin
+export const RIVER_ROW = 5, JUMPS = [2, 5];
+export const RIVER = { z0: blockMin(RIVER_ROW) + 7, z1: blockMin(RIVER_ROW) + BLOCK - 7, bed: -3, slope: 10, water: -2.2, deck: 0.7 }; // Böschung 17°
+// Sprungrampe als Bogen aus drei Stücken [Länge m, Neigung rad] (ein einzelner Knick bremst das Auto zu stark), Kante 1,6 m hoch am Ufer.
+// rampParts(): je Stück d = Abstand der Oberseitenmitte vor der Kante, y = Höhe dort, a = Neigung, L = Länge
+export const RAMP = [[3, 0.07], [3, 0.17], [3, 0.3]];
+export function rampParts() {
+  const total = RAMP.reduce((t, [L, a]) => t + L * Math.cos(a), 0); let x = 0, h = 0;
+  return RAMP.map(([L, a]) => { const p = { d: total - x - L * Math.cos(a) / 2, y: h + L * Math.sin(a) / 2, a, L }; x += L * Math.cos(a); h += L * Math.sin(a); return p; });
+}
+export const BRIDGES = Array.from({ length: GRID + 1 }, (_, i) => i).filter(i => !JUMPS.includes(i)).map(roadCenter);
+export const BRIDGE_HALF = ROAD / 2 + WALK; // Fahrbahn + beide Gehwege
+export function riverY(x, z) { // Kanalprofil ohne Brücken, 0 = Straßenniveau
+  if (x < -HALF || x > HALF || z <= RIVER.z0 || z >= RIVER.z1) return 0;
+  return Math.max(RIVER.bed, Math.min(z - RIVER.z0, RIVER.z1 - z) * RIVER.bed / RIVER.slope);
+}
+export const roadOpen = (i, j, a, b) => !(i === a && JUMPS.includes(i) && Math.min(j, b) === RIVER_ROW); // Straßenstück (i,j)-(a,b) befahrbar?
+
 export function buildCity(seed = 1337) {
   const r = rng(seed);
-  const blocks = [], buildings = [], props = [], parking = [];
+  const blocks = [], buildings = [], props = [], parking = [], parks = [];
   const mid = (GRID - 1) / 2;
   for (let bx = 0; bx < GRID; bx++) for (let bz = 0; bz < GRID; bz++) {
     const x0 = blockMin(bx), z0 = blockMin(bz), x1 = x0 + BLOCK, z1 = z0 + BLOCK;
     const d = Math.max(Math.abs(bx - mid), Math.abs(bz - mid));
     let type = d <= 1 ? 'downtown' : 'town';
-    if ((bx === 1 && bz === 5) || (bx === 5 && bz === 1) || (bx === 3 && bz === 3)) type = 'park';
+    if (bz === RIVER_ROW) type = 'river';
+    else if ((bx === 1 && bz === 6) || (bx === 5 && bz === 1) || (bx === 3 && bz === 3)) type = 'park';
     else if (d >= 2 && r() < 0.12) type = 'park';
     blocks.push({ bx, bz, x0, z0, x1, z1, type });
     const ix0 = x0 + WALK, iz0 = z0 + WALK, inner = BLOCK - 2 * WALK; // 40m Innenfläche
-    if (type === 'park') {
-      for (let k = 0; k < 14; k++) {
-        const kind = ['tree_palm', 'tree_palm', 'tree_palm', 'tree_oak', 'bush', 'bush_large', 'rock_small'][Math.floor(r() * 7)];
-        props.push({ kind, x: ix0 + 3 + r() * (inner - 6), z: iz0 + 3 + r() * (inner - 6), rot: r() * 6.28, s: 4 + r() * 2.5, solid: kind.startsWith('tree') });
+    if (type === 'river') { // Palmen auf beiden Uferpromenaden
+      for (let x = x0 + 8; x < x1 - 4; x += 11) for (const z of [z0 + 5.5, z1 - 5.5]) props.push({ kind: 'tree_palm', x: x + r() * 2, z, rot: r() * 6.28, s: 4.4 + r() * 1.6, solid: true });
+      continue;
+    }
+    if (type === 'park') { // Kreuzwege zu einem runden Platz mit Brunnen oder Teich, Bäume in den vier Vierteln
+      const cx = ix0 + inner / 2, cz = iz0 + inner / 2;
+      parks.push({ x: cx, z: cz, pond: (bx + bz) % 2 === 1 });
+      for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) for (let k = 0; k < 6; k++) {
+        const dx = 3.4 + r() * 14, dz = 3.4 + r() * 14, tree = k < 4;
+        if (Math.hypot(dx, dz) < 11.5) continue; // Platz und Ringweg frei lassen
+        const kind = tree ? ['tree_oak', 'tree_fat', 'tree_pine', 'tree_palm', 'tree_oak'][Math.floor(r() * 5)] : r() < 0.5 ? 'bush' : 'bush_large';
+        props.push({ kind, x: cx + sx * dx, z: cz + sz * dz, rot: r() * 6.28, s: tree ? 3.8 + r() * 2.4 : 3 + r() * 2, solid: tree });
       }
       continue;
     }
@@ -97,12 +125,14 @@ export function buildCity(seed = 1337) {
     if (type === 'downtown' && r() < 0.55) {
       const w = inner - 6;
       buildings.push({ style: r() < 0.6 ? 'glass' : 'condo', floors: 22 + Math.floor(r() * 18), x: ix0 + inner / 2, z: iz0 + inner / 2, w, d: w, rot: Math.floor(r() * 4) * Math.PI / 2 });
+    } else if (bx === GRID - 1 && r() < 0.5) { // Strandhotel: Scheibe längs der Küste, Front zum Meer
+      buildings.push({ style: 'hotel', floors: 9 + Math.floor(r() * 8), x: ix0 + inner / 2, z: iz0 + inner / 2, w: inner - 6, d: 15, rot: Math.PI / 2 });
     } else {
       const lot = inner / 2;
       for (let lx = 0; lx < 2; lx++) for (let lz = 0; lz < 2; lz++) {
-        const pool = type === 'downtown' ? ['office', 'glass', 'condo', 'office'] : bx === GRID - 1 ? ['deco', 'deco', 'deco', 'condo'] : ['deco', 'deco', 'condo', 'office'];
-        const style = pool[Math.floor(r() * pool.length)];
-        const floors = type === 'downtown' ? 7 + Math.floor(r() * 9) : style === 'condo' ? 4 + Math.floor(r() * 6) : 2 + Math.floor(r() * 4);
+        const pool = type === 'downtown' ? ['office', 'glass', 'condo', 'office', 'brick'] : bx === GRID - 1 ? ['deco', 'deco', 'deco', 'condo'] : ['deco', 'brick', 'condo', 'office', 'brick'];
+        const style = r() < 0.07 ? 'garage' : pool[Math.floor(r() * pool.length)];
+        const floors = style === 'garage' ? 3 + Math.floor(r() * 3) : type === 'downtown' ? 7 + Math.floor(r() * 9) : style === 'condo' ? 4 + Math.floor(r() * 6) : style === 'brick' ? 3 + Math.floor(r() * 5) : 2 + Math.floor(r() * 4);
         // Front zeigt zur nächsten Straße (+z = vorn)
         const rot = lz === 1 ? 0 : Math.PI;
         const w = lot - 2.5 - r() * 2, dd = lot - 2.5 - r() * 2;
@@ -120,7 +150,7 @@ export function buildCity(seed = 1337) {
   for (let k = 0; k < 70; k++) beach.push({ x: HALF + 10 + r() * (BEACH - 18), z: -HALF + 6 + r() * (SIZE - 12), rot: r() * 6.28, c: Math.floor(r() * 6) });
   // Parkplätze am Straßenrand (Parkspur = 5,5 m neben der Mittellinie)
   for (let i = 0; i <= GRID; i++) for (let j = 0; j < GRID; j++) {
-    if (r() < 0.45) {
+    if (r() < 0.45 && (j !== RIVER_ROW || !JUMPS.includes(i))) {
       const side = r() < 0.5 ? 1 : -1;
       const along = blockMin(j) + 8 + r() * (BLOCK - 16);
       // Straße entlang z (x konstant) bzw. entlang x
@@ -135,7 +165,15 @@ export function buildCity(seed = 1337) {
     return { x0: b.x - hw, x1: b.x + hw, z0: b.z - hd, z1: b.z + hd };
   });
   for (const p of props) if (p.solid) solids.push({ x0: p.x - 0.5, x1: p.x + 0.5, z0: p.z - 0.5, z1: p.z + 0.5 });
-  return { seed, blocks, buildings, props, parking, solids, beach };
+  for (const p of parks) {
+    const a = p.pond ? 5 : 2.5, e = (BLOCK - 2 * WALK) / 2 - 0.6; // Brunnen-/Teichrand (Quadrat im Kreis), Hecken 0,6 m innerhalb des Gehwegs
+    solids.push({ x0: p.x - a, x1: p.x + a, z0: p.z - a, z1: p.z + a, h: 0.9 });
+    for (const s of [-1, 1]) for (const [lo, hi] of [[-e - 0.4, -2.1], [2.1, e + 0.4]]) { // Durchgänge an den Wegen
+      solids.push({ x0: p.x + lo, x1: p.x + hi, z0: p.z + s * e - 0.4, z1: p.z + s * e + 0.4, h: 1, hedge: true });
+      solids.push({ x0: p.x + s * e - 0.4, x1: p.x + s * e + 0.4, z0: p.z + lo, z1: p.z + hi, h: 1, hedge: true });
+    }
+  }
+  return { seed, blocks, buildings, props, parking, solids, beach, parks };
 }
 
 // Rundweg eines Passanten um einen Block (Gehwegmitte)

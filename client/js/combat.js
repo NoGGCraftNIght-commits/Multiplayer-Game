@@ -58,7 +58,7 @@ export class Combat {
 
   // Welt-Kollision eines Punktes: Normale oder null
   solidAt(x, y, z, n) {
-    if (y < this.groundY(x, z)) return n.set(0, 1, 0);
+    if (y < this.groundY(x, z, y)) return n.set(0, 1, 0);
     const s = this.city.solids;
     for (let i = 0; i < s.length; i++) {
       const b = s[i];
@@ -135,7 +135,7 @@ export class Combat {
       const p = this.parts[k]; if (!p) continue;
       if ((p.life -= dt) <= 0) { this.parts[k] = null; pos.setXYZ(k, 0, -999, 0); continue; }
       p.v.y -= 9 * dt; p.p.addScaledVector(p.v, dt);
-      const gy = this.groundY(p.p.x, p.p.z) + 0.03; if (p.p.y < gy) { p.p.y = gy; p.v.set(0, 0, 0); }
+      const gy = this.groundY(p.p.x, p.p.z, p.p.y) + 0.03; if (p.p.y < gy) { p.p.y = gy; p.v.set(0, 0, 0); }
       pos.setXYZ(k, p.p.x, p.p.y, p.p.z);
     }
     pos.needsUpdate = true;

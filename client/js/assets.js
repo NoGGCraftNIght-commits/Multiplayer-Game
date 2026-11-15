@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { stdMat, LITE } from './gfx.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { AVATARS, VEHICLE_TYPES } from './shared.js';
@@ -20,8 +21,8 @@ function fixMaterials(root) {
     o.castShadow = true; o.receiveShadow = true;
     const mats = Array.isArray(o.material) ? o.material : [o.material];
     const fixed = mats.map(m => {
-      if (m.isMeshStandardMaterial) { m.roughness = Math.max(m.roughness, 0.6); m.metalness = Math.min(m.metalness, 0.2); return m; }
-      return new THREE.MeshStandardMaterial({ color: m.color, map: m.map || null, roughness: 0.85, vertexColors: !!m.vertexColors, name: m.name });
+      if (m.isMeshStandardMaterial && !LITE) { m.roughness = Math.max(m.roughness, 0.6); m.metalness = Math.min(m.metalness, 0.2); return m; }
+      return stdMat({ color: m.color, map: m.map || null, roughness: 0.85, vertexColors: !!m.vertexColors, name: m.name, transparent: m.transparent, opacity: m.opacity, alphaTest: m.alphaTest, side: m.side });
     });
     o.material = Array.isArray(o.material) ? fixed : fixed[0];
   });

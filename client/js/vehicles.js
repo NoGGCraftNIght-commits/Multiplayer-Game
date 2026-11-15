@@ -1,7 +1,8 @@
 import * as THREE from 'three';
+import { stdMat, LITE } from './gfx.js';
 import * as CANNON from 'cannon-es';
 import { assets } from './assets.js';
-import { VEHICLES, VEHICLE_TYPES, CAR_SIZE, HALF, SIZE, BLOCK, BEACH } from './shared.js';
+import { VEHICLES, VEHICLE_TYPES, CAR_SIZE, HALF, SIZE, BLOCK, BEACH, RIVER, BRIDGES, BRIDGE_HALF, JUMPS, ROAD, roadCenter, rampParts, riverY } from './shared.js';
 import { SLAB } from './world.js';
 import { Interp } from './net.js';
 
@@ -13,7 +14,7 @@ const DOOR_AT = 45;       // ab so viel Seitenschaden fehlt die Tür
 const _p = new THREE.Vector3(), _d = new THREE.Vector3(), _m1 = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _m3 = new THREE.Matrix4(), _ray = new THREE.Raycaster();
 const ramp = (u, from) => { const t = Math.min(1, Math.max(0, (u - from) / (1 - from))); return t * t * (3 - 2 * t); };
 const rnd = (a, b) => a + Math.random() * (b - a);
-const BURNT = new THREE.MeshStandardMaterial({ color: 0x141312, roughness: 1 }), HOLE = new THREE.MeshBasicMaterial({ color: 0x07080a });
+const BURNT = stdMat({ color: 0x141312, roughness: 1 }), HOLE = new THREE.MeshBasicMaterial({ color: 0x07080a });
 const GREY = [0.62, 0.62, 0.64], DARK = [0.07, 0.07, 0.07], FIRE = [3.2, 1.1, 0.18], EMBER = [2.4, 0.35, 0.05];
 // Kenney-Atlas (8 x 8 Farbfelder, alle Autos teilen ihn): je Feld Lack, Glas, Zierteile, Reifen oder Chrom
 const CELL_KIND = { '3,4': 'trim', '3,5': 'trim', '2,4': 'tire', '2,5': 'tire', '5,4': 'chrome', '5,5': 'chrome', '0,6': 'glass', '0,7': 'glass' }; // 'Spalte,Zeile'
@@ -32,6 +33,7 @@ function carMaterial(map) {
     g.fillStyle = tint; g.fillRect(x * s, y * s, s, s); // Lack etwas tiefer, Glas dunkel getönt
   }
   const tex = (c, srgb) => Object.assign(new THREE.CanvasTexture(c), { flipY: map.flipY, colorSpace: srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace, anisotropy: 4 });
+  if (LITE) return CAR = new THREE.MeshLambertMaterial({ map: tex(col, true) }); // Chromebook: kein Klarlack
   const rmT = tex(rm);
   return CAR = new THREE.MeshPhysicalMaterial({ map: tex(col, true), roughnessMap: rmT, metalnessMap: rmT, clearcoatMap: tex(cc), clearcoat: 1, clearcoatRoughness: 0.06, roughness: 1, metalness: 1 });
 }
@@ -74,13 +76,31 @@ export class Vehicles {
     this.world.broadphase = new CANNON.SAPBroadphase(this.world);
     this.world.defaultContactMaterial.friction = 0.2;
     this.world.allowSleep = false;
-    // Boden als große Box: Raycasts gegen CANNON.Plane treffen in cannon-es 0.20 nur eine Hälfte der Ebene
-    this.world.addBody(new CANNON.Body({ type: CANNON.Body.STATIC, shape: new CANNON.Box(new CANNON.Vec3(1500, 1, 1500)), position: new CANNON.Vec3(0, -1, 0) }));
-    const addBox = (x, y, z, hx, hy, hz) => this.world.addBody(new CANNON.Body({ type: CANNON.Body.STATIC, shape: new CANNON.Box(new CANNON.Vec3(hx, hy, hz)), position: new CANNON.Vec3(x, y, z) }));
-    for (const b of city.blocks) addBox((b.x0 + b.x1) / 2, SLAB / 2, (b.z0 + b.z1) / 2, BLOCK / 2, SLAB / 2, BLOCK / 2);
+    const addBox = (x, y, z, hx, hy, hz, rx = 0) => this.world.addBody(new CANNON.Body({ type: CANNON.Body.STATIC, shape: new CANNON.Box(new CANNON.Vec3(hx, hy, hz)), position: new CANNON.Vec3(x, y, z), quaternion: new CANNON.Quaternion().setFromEuler(rx, 0, 0) }));
+    // Boden aus Boxen (Raycasts gegen CANNON.Plane treffen in cannon-es 0.20 nur eine Hälfte der Ebene), mit Lücke für den Fluss
+    const { z0, z1, bed, slope } = RIVER, F = 1500, mz = (z0 + z1) / 2;
+    addBox(0, -1, (z0 - F) / 2, F, 1, (z0 + F) / 2); addBox(0, -1, (z1 + F) / 2, F, 1, (F - z1) / 2);
+    for (const s of [-1, 1]) addBox(s * (HALF + F) / 2, -1, mz, (F - HALF) / 2, 1, (z1 - z0) / 2);
+    addBox(0, bed - 1, mz, HALF, 1, (z1 - z0) / 2 - slope);                                                     // Flussbett
+    const a = Math.atan2(-bed, slope), sl = Math.hypot(bed, slope) / 2;                                            // Böschungen
+    for (const s of [-1, 1]) addBox(0, bed / 2 - 0.5 * Math.cos(a), mz + s * ((z1 - z0) / 2 - slope / 2) + s * 0.5 * Math.sin(a), HALF, 0.5, sl, s * -a);
+    for (const s of [-1, 1]) addBox(s * (HALF + 0.5), bed / 2, mz, 0.5, -bed / 2, (z1 - z0) / 2);                // Kanalenden
+    for (const c of BRIDGES) { // Brücken (an den Stadträndern nur bis zum Kanalende) mit Brüstung
+      const xa = Math.max(c - BRIDGE_HALF, -HALF), xb = Math.min(c + BRIDGE_HALF, HALF);
+      addBox((xa + xb) / 2, -RIVER.deck / 2, mz, (xb - xa) / 2, RIVER.deck / 2, (z1 - z0) / 2);
+      for (const x of [xa + 0.2, xb - 0.2]) addBox(x, 0.55, mz, 0.2, 0.55, (z1 - z0) / 2);
+    }
+    for (const i of JUMPS) for (const s of [-1, 1]) for (const p of rampParts()) // Sprungrampen an beiden Ufern, Kante genau an der Böschung
+      addBox(roadCenter(i), p.y - Math.cos(p.a), mz + s * ((z1 - z0) / 2 + p.d) - s * Math.sin(p.a), ROAD / 2, 1, p.L / 2 + 0.05, s * p.a);
+    for (const b of city.blocks) {
+      if (b.type !== 'river') { addBox((b.x0 + b.x1) / 2, SLAB / 2, (b.z0 + b.z1) / 2, BLOCK / 2, SLAB / 2, BLOCK / 2); continue; }
+      for (const [za, zb] of [[b.z0, z0], [z1, b.z1]]) addBox((b.x0 + b.x1) / 2, SLAB / 2, (za + zb) / 2, BLOCK / 2, SLAB / 2, (zb - za) / 2);
+    }
     city.solids.forEach((s, i) => { const h = heights[i] || 4; addBox((s.x0 + s.x1) / 2, h / 2, (s.z0 + s.z1) / 2, (s.x1 - s.x0) / 2, h / 2, (s.z1 - s.z0) / 2); });
     for (const [x, z, hx, hz] of [[BEACH / 2, -HALF - 1, SIZE / 2 + BEACH / 2 + 6, 1], [BEACH / 2, HALF + 1, SIZE / 2 + BEACH / 2 + 6, 1], [-HALF - 1, 0, 1, SIZE / 2 + 2], [HALF + BEACH + 5, 0, 1, SIZE / 2 + 2]]) addBox(x, 2, z, hx, 2, hz);
     this.mine = null; // { v, rv } wenn ich fahre
+    this.far = 400;   // Sichtweite für Autos, setzt main.js nach der Qualitätsstufe
+    this.hz = 60;     // Physik-Takt (Chromebook-Stufen: 30)
     this.smoke = new Puffs(scene, 260, 1.7, false); this.fire = new Puffs(scene, 220, 1.0, true); this.debris = [];
     this.flash = new THREE.PointLight(0xff8a30, 0, 45); scene.add(this.flash); // von Anfang an in der Szene: kein Shader-Neubau beim ersten Knall
     this.onBoom = null; // (v) => Ton usw.
@@ -108,8 +128,8 @@ export class Vehicles {
     body.addShape(new CANNON.Box(half), new CANNON.Vec3(0, 0.12, (bb.max.z + bb.min.z) / 2));
     this.world.addBody(body);
     // Licht: Scheinwerfer (emissiv, leuchten nachts mit Bloom)
-    const lightMat = new THREE.MeshStandardMaterial({ color: 0xfff6d8, emissive: 0xfff2c0, emissiveIntensity: 0.3 });
-    const tailMat = new THREE.MeshStandardMaterial({ color: 0xff3030, emissive: 0xff2020, emissiveIntensity: 0.4 });
+    const lightMat = stdMat({ color: 0xfff6d8, emissive: 0xfff2c0, emissiveIntensity: 0.3 });
+    const tailMat = stdMat({ color: 0xff3030, emissive: 0xff2020, emissiveIntensity: 0.4 });
     const hl = new THREE.BoxGeometry(0.3, 0.11, 0.05);
     for (const sx of [-1, 1]) {
       const h = new THREE.Mesh(hl, lightMat); h.position.set(sx * half.x * 0.62, 0.6, bb.max.z + 0.01); group.add(h);
@@ -184,7 +204,8 @@ export class Vehicles {
     const speed = b.velocity.dot(fwd);
     v.speed = speed;
     let engine = 0, brake = 0;
-    if (input.throttle > 0) { if (speed < -1) brake = 60; else if (speed < cfg.vmax) engine = cfg.force * input.throttle * power; }
+    if (riverY(b.position.x, b.position.z) < -0.3) engine = 0.7; // im Kanal: mehr Zugkraft, damit auch schwere Wagen die Böschung hochkommen
+    if (input.throttle > 0) { if (speed < -1) brake = 60; else if (speed < cfg.vmax) engine = cfg.force * input.throttle * power * (1 + engine); }
     else if (input.throttle < 0) { if (speed > 1) brake = 70 * -input.throttle; else if (speed > -12) engine = cfg.force * 0.6 * input.throttle * power; }
     else brake = 4;
     this.braking = brake > 10 || !!input.handbrake;
@@ -197,6 +218,7 @@ export class Vehicles {
       rv.setBrake(hb ? 90 : brake, i);
       w.frictionSlip = hb ? cfg.grip * 0.45 : cfg.grip;
     });
+    b.linearDamping = b.position.y < RIVER.water + 0.4 ? 0.4 : 0.02; // im Fluss bremst das Wasser
     // Abtrieb: mehr Bodenhaftung bei Tempo
     b.applyForce(new CANNON.Vec3(0, -Math.abs(speed) * cfg.mass * 0.04, 0)); // im Schwerpunkt (cannon-es: Angriffspunkt ist relativ, nicht in Weltkoordinaten)
     // Umgekippt? -> nach 1,5 s automatisch aufrichten
@@ -214,6 +236,7 @@ export class Vehicles {
   update(dt, renderT, night, eye) {
     const self = this.mine?.v;
     let nb = 0;
+    for (const v of this.list) if (v) v.group.visible = v.pos.distanceToSquared(eye) < this.far * this.far; // hinter dem Nebel: nicht zeichnen (Kamera reicht bis zu den Bergen)
     for (const v of this.list) if (v && nb < 160) this.blobs.setMatrixAt(nb++, _m1.compose(_p.set(v.pos.x, v.pos.y + 0.04, v.pos.z), v.quat, _d.set((v.bb.max.x - v.bb.min.x) * 1.15, 1, (v.bb.max.z - v.bb.min.z) * 1.1)));
     this.blobs.count = nb; this.blobs.instanceMatrix.needsUpdate = true;
     // fremde Fahrzeuge: interpolierte Pose -> Kinematik-Körper
@@ -232,7 +255,7 @@ export class Vehicles {
       v.pos.copy(np); v.quat.copy(nq);
       this.place(v, np, nq);
     }
-    this.world.step(1 / 60, dt, 4);
+    this.world.step(1 / this.hz, dt, 4);
     for (const v of this.list) {
       if (!v) continue;
       if (v === self) { // eigene Pose aus Physik, zwischen den festen Physikschritten geglättet (auch der Server liest daraus das Tempo)
@@ -333,7 +356,7 @@ export class Vehicles {
     const hole = v.doors[i] = new THREE.Mesh(new THREE.PlaneGeometry(len * 0.27, 0.62), HOLE);
     hole.position.set(x + sx * 0.03, 0.66, z); hole.rotation.y = sx * Math.PI / 2; v.group.add(hole);
     if (quiet) return;
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.6, len * 0.27), new THREE.MeshStandardMaterial({ color, roughness: 0.6 }));
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.6, len * 0.27), stdMat({ color, roughness: 0.6 }));
     hole.getWorldPosition(mesh.position); mesh.quaternion.copy(v.quat); mesh.castShadow = true; this.scene.add(mesh);
     this.debris.push({ mesh, t: 0, spin: rnd(3, 7), vel: _d.set(sx * 3.5, 2.6, 0).applyQuaternion(v.quat).clone() });
   }

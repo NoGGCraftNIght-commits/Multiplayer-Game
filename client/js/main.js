@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { SERVER_URL } from './config.js';
 import { loadAll, loadModel, assets } from './assets.js';
-import { World, SLAB, QUALITY } from './world.js';
+import { World, SLAB } from './world.js';
+import { QUALITY, DEFAULT_Q, START_Q, LITE, CHROMEBOOK } from './gfx.js';
 import { Vehicles } from './vehicles.js';
 import { Character, gunIcon } from './character.js';
 import { Combat } from './combat.js';
@@ -10,7 +11,7 @@ import { Input } from './input.js';
 import { Hud } from './hud.js';
 import { makeHeli } from './heli.js';
 import { Net, Interp, RENDER_DELAY } from './net.js';
-import { A, AIM_FLAG, AVATARS, COPS, WEAPONS, DAY_LENGTH, TICK_HZ, PED_HZ, HALF, BEACH, buildCity, pushOut, clamp, sanitizeName, sanitizeRoom } from './shared.js';
+import { A, AIM_FLAG, AVATARS, COPS, WEAPONS, DAY_LENGTH, TICK_HZ, PED_HZ, HALF, BEACH, RIVER, buildCity, pushOut, clamp, sanitizeName, sanitizeRoom } from './shared.js';
 
 // Spritzstadt – Spielschleife: Menü, Beitritt, eigene Figur, Kamera, Fahren, Netz, HUD.
 const $ = (id) => document.getElementById(id);
@@ -26,10 +27,10 @@ const store = {
   set(k, v) { try { localStorage.setItem('ss_' + k, v); } catch { /* privater Modus: Einstellungen gelten nur bis zum Neuladen */ } },
 };
 const settings = {
-  quality: store.get('quality', matchMedia('(pointer: coarse)').matches ? 'low' : 'medium'), style: store.get('style', 'real'),
+  quality: START_Q, style: store.get('style', 'real'),
   sens: clamp(+store.get('sens', 1) || 1, 0.3, 2.5), sound: store.get('sound', '1') === '1',
 };
-if (!QUALITY[settings.quality]) settings.quality = 'medium';
+if (!QUALITY[settings.quality]) settings.quality = DEFAULT_Q;
 
 const lerp = (a, b, k) => a + (b - a) * k;
 const turn = (a, b) => { const d = (b - a) % (Math.PI * 2); return d > Math.PI ? d - Math.PI * 2 : d < -Math.PI ? d + Math.PI * 2 : d; }; // kürzester Winkel von a nach b
@@ -61,9 +62,9 @@ async function boot() {
   audio = new Audio(); audio.enabled = settings.sound;
   input = new Input(canvas); input.sens = settings.sens;
   hud = new Hud(city);
-  combat = new Combat({ scene: world.scene, city, heights: world.heights, groundY: (x, z) => world.groundY(x, z), vehicles, audio, targets, onHit, onReload: (w) => net.emit('reload', w) });
+  combat = new Combat({ scene: world.scene, city, heights: world.heights, groundY: (x, z, y) => world.groundY(x, z, y), vehicles, audio, targets, onHit, onReload: (w) => net.emit('reload', w) });
   vehicles.onBoom = (v) => { audio.play('impact', { pos: v.pos, vol: 3, rate: 0.32 }); audio.play('land', { pos: v.pos, vol: 2.5, rate: 0.45 }); };
-  setupMenu();
+  setupMenu(); setupShaders();
   $('loading').classList.add('hidden'); $('menu').classList.remove('hidden');
   phase = 'menu';
   requestAnimationFrame(frame);
@@ -94,10 +95,10 @@ function setupMenu() {
   $('quality').value = settings.quality; $('style').value = settings.style; $('sens').value = settings.sens; $('sound').checked = settings.sound;
   $('settings').addEventListener('input', (e) => {
     Object.assign(settings, { quality: $('quality').value, style: $('style').value, sens: +$('sens').value, sound: $('sound').checked });
-    for (const k of ['quality', 'style', 'sens']) store.set(k, settings[k]);
+    for (const k of ['style', 'sens']) store.set(k, settings[k]);
     store.set('sound', settings.sound ? '1' : '0');
     input.sens = settings.sens; audio.setEnabled(settings.sound);
-    if (e.target.id === 'quality' || e.target.id === 'style') world.applySettings(settings);
+    if (e.target.id === 'style') world.applySettings(settings);
   });
 
   my.avatar = clamp(+store.get('avatar', 0) | 0, 0, AVATARS.length - 1);
@@ -340,7 +341,8 @@ function walk(dt, ctl) {
   if (moving) {
     const s = Math.sin(cam.yaw), c = Math.cos(cam.yaw), k = 1 / Math.max(1, len);
     const dx = (s * mv.y - c * mv.x) * k, dz = (c * mv.y + s * mv.x) * k; // vorwärts = Blickrichtung, rechts = (-cos, sin)
-    p.x += dx * me.speed * dt; p.z += dz * me.speed * dt;
+    const wade = me.pos.y < RIVER.water - 0.3 ? 0.45 : 1; // im Fluss geht es nur langsam voran
+    p.x += dx * me.speed * wade * dt; p.z += dz * me.speed * wade * dt;
     if (!me.aim) me.yaw += turn(me.yaw, Math.atan2(dx, dz)) * Math.min(1, dt * 12);
     me.emoteT = 0;
     if (!me.air && (me.stepD += pace * dt) > (pace > 5 ? 1.9 : pace > 2.2 ? 1.3 : 0.75)) { me.stepD = 0; audio.play('step', { vol: 0.2 }); }
@@ -350,7 +352,8 @@ function walk(dt, ctl) {
   let o = pushOut(city.solids, p.x, p.z, RADIUS); if (o) { p.x += o[0]; p.z += o[1]; }
   o = vehicles.pushOut(p.x, p.z, RADIUS); if (o) { p.x += o[0]; p.z += o[1]; }
   p.x = clamp(p.x, -HALF + 0.4, HALF + BEACH + 4); p.z = clamp(p.z, -HALF + 0.4, HALF - 0.4);
-  const g = world.groundY(p.x, p.z);
+  const g = world.groundY(p.x, p.z, p.y);
+  if (!me.air && g < p.y - 0.6) { me.air = true; me.vy = 0; } // über eine Kante (Brücke, Ufer) gelaufen: fallen
   if (me.air) {
     me.vy -= 16 * dt; p.y += me.vy * dt;
     if (p.y <= g) { p.y = g; me.air = false; me.vy = 0; audio.play('land', { vol: 0.4 }); }
@@ -409,7 +412,7 @@ function leaveCar(tell) {
   vehicles.stopDriving(); audio.engine(false); me.veh = null; v.driver = 0;
   const free = (s) => !pushOut(city.solids, v.pos.x + ex * d * s, v.pos.z + ez * d * s, 0.4) && !vehicles.pushOut(v.pos.x + ex * d * s, v.pos.z + ez * d * s, 0.4);
   const side = free(1) || !free(-1) ? 1 : -1; // Fahrertür, sonst Beifahrerseite
-  me.pos.set(v.pos.x + ex * d * side, 0, v.pos.z + ez * d * side); me.pos.y = world.groundY(me.pos.x, me.pos.z);
+  me.pos.set(v.pos.x + ex * d * side, 0, v.pos.z + ez * d * side); me.pos.y = world.groundY(me.pos.x, me.pos.z, v.pos.y + 0.5);
   me.yaw = yaw; me.air = false; me.vy = 0; me.speed = 0; me.char.root.visible = true;
 }
 
@@ -598,8 +601,33 @@ function play(dt, now) {
   Object.assign(audio.listener, { x: world.camera.position.x, z: world.camera.position.z, yaw: cam.yaw });
 }
 
+// Shader-Karten: Wechsel zwischen Chromebook- und PBR-Shadern lädt neu (Materialien entstehen beim Start)
+function setupShaders() {
+  const box = $('quality'), note = $('qualityNote');
+  const mark = () => { for (const b of box.children) b.setAttribute('aria-checked', b.dataset.q === settings.quality); };
+  for (const [k, q] of Object.entries(QUALITY)) {
+    const b = Object.assign(document.createElement('button'), { type: 'button', className: 'shader' + (q.lite ? ' cb' : '') });
+    b.dataset.q = k; b.setAttribute('role', 'radio');
+    b.innerHTML = `<b>${q.name}</b><small>${q.tag}</small><span class="meter"><span>Tempo</span><i style="--v:${q.speed}"></i></span><span class="meter look"><span>Optik</span><i style="--v:${q.look}"></i></span>${k === DEFAULT_Q ? '<em>Empfohlen</em>' : ''}`;
+    b.setAttribute('aria-label', `${q.name}: ${q.tag}. Tempo ${q.speed} von 5, Optik ${q.look} von 5`);
+    b.onclick = () => {
+      settings.quality = k; store.set('quality', k); mark();
+      if (!!q.lite !== LITE) { note.textContent = 'Shader werden geladen …'; location.reload(); return; }
+      applyQuality();
+    };
+    box.append(b);
+  }
+  note.textContent = CHROMEBOOK ? 'Chromebook erkannt: die Chromebook-Stufen sparen CPU und Akku.' : 'Ruckelt es? Eine Stufe weiter links wählen.';
+  mark(); applyQuality();
+}
+function applyQuality() {
+  const q = QUALITY[settings.quality];
+  world.applySettings(settings); vehicles.far = q.fog + 30; vehicles.hz = q.phys;
+}
+
 function frame(now) {
   requestAnimationFrame(frame);
+  if (world?.q.fps && now - last < 1000 / world.q.fps - 3) return; // Chromebook: nur 30 Bilder/s, halbiert CPU- und GPU-Arbeit
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
   simT += dt * 1000; // Spielzeit in ms: bleibt bei Rucklern stehen wie die Physik (sonst sähe ein Ruckler wie ein Aufprall aus)
   if (phase === 'play') play(dt, now);

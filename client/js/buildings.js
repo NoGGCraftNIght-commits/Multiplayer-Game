@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { stdMat } from './gfx.js';
 import { rng } from './shared.js';
 
 // Prozedurale Miami-Häuser in echtem Maßstab (Geschoss 3,2 m, Tür 2,2 m): Kästen mit gekachelten
@@ -11,6 +12,9 @@ const TINT = {
   condo: [0xffffff, 0xfff1dc, 0xe6f3f8, 0xffe0cf],
   office: [0xe9dfce, 0xdcdcdc, 0xf2e8da, 0xd2dbe0],
   glass: [0x9fe8f0, 0x8fc0ff, 0xa6f0c6, 0xffd9a8, 0xd8e4f0],
+  brick: [0xffffff, 0xf3dfd2, 0xe2d2c6, 0xffe6d0, 0xd6c8c0],
+  garage: [0xffffff, 0xe8e4dc, 0xd8dade],
+  hotel: [0xffffff, 0xfff1dc, 0xe6f3f8, 0xffe0cf, 0xffd6e0],
 };
 const NEON = [0xff2d95, 0x21e6ff, 0xb44dff, 0xff9a1f, 0x3dff8a];
 const SIGN = [['#5a1f47', '#ff3fa4'], ['#12485a', '#35e0ff'], ['#3c2a66', '#b06bff'], ['#6a3a10', '#ffa53a']]; // Schild: Tagfarbe, Leuchtfarbe
@@ -20,6 +24,8 @@ const LIT = {
   condo: [[[0.117, 0.25, 0.375, 0.69], [0.508, 0.25, 0.375, 0.69]], 0.38, ['#ffd9a0', '#ffe9c4', '#ffcf8a', '#c9e4ff']],
   office: [[[0.055, 0.19, 0.89, 0.53]], 0.5, ['#eaf4ff', '#f4f8ff', '#fff6e0']],
   glass: [[[0.02, 0.02, 0.47, 0.72], [0.51, 0.02, 0.47, 0.72]], 0.33, ['#eaf4ff', '#ffe9c4', '#d6ecff']],
+  brick: [[[0.266, 0.172, 0.47, 0.625]], 0.4, ['#ffd9a0', '#ffcf8a', '#ffe9c4']],
+  garage: [[[0.08, 0.1, 0.84, 0.04]], 0.85, ['#e8f2ff', '#f4f8ff']],
 };
 
 let K = 1, RM = null; // K = Texturauflösung (2 auf mittel/hoch); RM = Rauheit/Metall-Leinwand der gerade gezeichneten Fassade
@@ -36,7 +42,7 @@ function texture(c, repeat = 1, srgb = true) {
 // Material mit Farbe, Nachtlicht und glatten, spiegelnden Scheiben
 function facadeMat(c, rc, ec, emissiveRepeat) {
   const rm = texture(rc, 1, false);
-  return new THREE.MeshStandardMaterial({ map: texture(c), roughnessMap: rm, metalnessMap: rm, roughness: 1, metalness: 1, emissiveMap: texture(ec, emissiveRepeat), emissive: 0xffffff, emissiveIntensity: 0, vertexColors: true });
+  return stdMat({ map: texture(c), roughnessMap: rm, metalnessMap: rm, roughness: 1, metalness: 1, emissiveMap: texture(ec, emissiveRepeat), emissive: 0xffffff, emissiveIntensity: 0, vertexColors: true });
 }
 
 // Schmutzschlieren unter Simsen und Fenstern: Fassaden wirken bewohnt statt frisch gerendert
@@ -88,6 +94,30 @@ const CELL = {
     glass(g, X + 7, Y + 24, 114, 68, '#628399', '#263a4a', r);
     g.fillStyle = '#e4e7ea'; for (const k of [1, 2]) g.fillRect(X + 6 + 38 * k, Y + 24, 2.5, 68);
     g.fillStyle = 'rgba(0,0,0,.13)'; g.fillRect(X, Y, 1.5, PX); g.fillRect(X, Y + 126, PX, 2); // Plattenfugen
+  },
+  brick(g, X, Y, r) {
+    g.save(); g.beginPath(); g.rect(X, Y, PX, PX); g.clip();
+    for (let y = 0; y < PX; y += 4) for (let x = (y / 4) % 2 ? -5 : 0; x < PX; x += 10) { // Läuferverband, Fugen = heller Grund
+      const v = r(); g.fillStyle = `rgb(${142 + v * 44},${66 + v * 26},${50 + v * 18})`; g.fillRect(X + x + 0.6, Y + y + 0.6, 9, 3);
+    }
+    g.restore();
+    const wx = X + 34, wy = Y + 22, ww = 60, wh = 80;
+    g.fillStyle = '#d9d1c1'; g.fillRect(wx - 6, wy - 10, ww + 12, 9); g.fillRect(wx - 5, wy + wh + 2, ww + 10, 5); // Sturz, Fensterbank
+    g.fillStyle = 'rgba(0,0,0,.28)'; g.fillRect(wx - 5, wy + wh + 7, ww + 10, 3);
+    g.fillStyle = '#f1eee6'; g.fillRect(wx - 3, wy - 3, ww + 6, wh + 6);
+    glass(g, wx, wy, ww, wh, '#6d8696', '#26343f', r);
+    g.fillStyle = '#f1eee6'; g.fillRect(wx, wy + wh / 2 - 2, ww, 4); g.fillRect(wx + ww / 2 - 1.5, wy, 3, wh); // Sprossen
+    if (r() < 0.35) { g.fillStyle = 'rgba(236,230,214,.9)'; g.fillRect(wx, wy, ww, wh * (0.2 + r() * 0.3)); } // Rollo
+    if (r() < 0.14) { g.fillStyle = '#c9c9c4'; g.fillRect(wx + 6, wy + wh / 2 + 4, 32, 20); g.fillStyle = '#8f8f8a'; for (let k = 0; k < 4; k++) g.fillRect(wx + 8, wy + wh / 2 + 7 + k * 4, 28, 1.5); } // Fenster-Klimagerät
+  },
+  garage(g, X, Y, r) {
+    g.fillStyle = '#1b1e22'; g.fillRect(X, Y + 12, PX, 70); // offenes Parkdeck
+    if (r() < 0.6) { // Autodach hinter der Brüstung
+      const cx = X + 12 + r() * 48; g.fillStyle = ['#8a1c1c', '#d8d8d8', '#1c3a6a', '#2a2a2a', '#9a9a9a', '#c7a020'][Math.floor(r() * 6)];
+      g.fillRect(cx, Y + 60, 60, 22); g.fillStyle = 'rgba(150,180,200,.4)'; g.fillRect(cx + 12, Y + 62, 36, 9);
+    }
+    g.fillStyle = '#c4c1ba'; g.fillRect(X, Y + 82, PX, 46); g.fillStyle = 'rgba(0,0,0,.2)'; g.fillRect(X, Y + 82, PX, 3); // Brüstung
+    g.fillStyle = '#b3b0a9'; g.fillRect(X, Y, PX, 12); g.fillRect(X, Y + 12, 9, 70); // Deckenkante, Stütze
   },
   glass(g, X, Y, r) {
     for (const k of [0, 1]) { const l = 30 + r() * 12; glass(g, X + k * 64, Y, 64, 96, `hsl(${198 + r() * 10},36%,${l + 28}%)`, `hsl(204,40%,${l}%)`, r); }
@@ -179,6 +209,14 @@ class Part {
     this.quad(m, [[x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0]], 0, 0, 0, 0, top);
     this.quad(m, [[x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1]], 0, 0, 0, 0, col);
   }
+  // stehendes n-Eck (Wassertank, Rohr); Deckel als Dreiecksfächer
+  prism(m, cx, cz, rad, y0, y1, n, col, top = col) {
+    for (let k = 0; k < n; k++) {
+      const a0 = k / n * Math.PI * 2, a1 = (k + 1) / n * Math.PI * 2, x0 = cx + Math.sin(a0) * rad, z0 = cz + Math.cos(a0) * rad, x1 = cx + Math.sin(a1) * rad, z1 = cz + Math.cos(a1) * rad;
+      this.quad(m, [[x0, y0, z0], [x1, y0, z1], [x1, y1, z1], [x0, y1, z0]], 0, 0, 0, 0, col);
+      this.quad(m, [[cx, y1, cz], [x0, y1, z0], [x1, y1, z1], [x1, y1, z1]], 0, 0, 0, 0, top);
+    }
+  }
   mesh(material) {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(this.p, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(this.n, 3));
@@ -194,25 +232,26 @@ class Part {
 export function makeBuildings(city, baseY, hi = false) {
   K = hi ? 2 : 1;
   const r = rng(city.seed + 7), pick = (a) => a[Math.floor(r() * a.length)];
-  const P = { deco: new Part(), condo: new Part(), office: new Part(), glass: new Part(), shop: new Part(), plain: new Part() };
+  const P = { deco: new Part(), condo: new Part(), office: new Part(), glass: new Part(), brick: new Part(), garage: new Part(), shop: new Part(), plain: new Part() };
   const heights = [], neon = [], m = new THREE.Matrix4(), q = new THREE.Quaternion(), UP = new THREE.Vector3(0, 1, 0), ONE = new THREE.Vector3(1, 1, 1);
-  const WHITE = new THREE.Color(0xf7f5f0), DARK = new THREE.Color(0x3a444e), ROOF = new THREE.Color(0x74777c), UNIT = new THREE.Color(0x9a9da2), RAIL = new THREE.Color(0xb9cdd6);
+  const WHITE = new THREE.Color(0xf7f5f0), DARK = new THREE.Color(0x3a444e), UNIT = new THREE.Color(0x9a9da2), RAIL = new THREE.Color(0xb9cdd6);
+  const ROOFS = [0x74777c, 0x5b5e63, 0x8a857a, 0x4a4c50].map(c => new THREE.Color(c)), STONE = new THREE.Color(0xd9d1c1), IRON = new THREE.Color(0x2c2f33), WOOD = new THREE.Color(0x7b5b40), WOODTOP = new THREE.Color(0x4f3b2a);
   for (const b of city.buildings) {
     const { style, floors } = b, top = GH + (floors - 1) * FH, tower = floors >= 18;
     // Büro- und Glastürme springen im oberen Drittel zurück (schlankere Silhouette); unten volle Grundfläche
     const back = tower && (style === 'office' || style === 'glass'), f1 = back ? Math.round((floors - 1) * 0.68) : floors - 1, y1 = GH + f1 * FH, sb = back ? 0.76 : 1;
     let w = b.w, d = b.d, hw = w / 2, hd = d / 2;
     const nx = Math.max(1, Math.round(w / BAY)), nz = Math.max(1, Math.round(d / BAY)), u0 = Math.floor(r() * 4) / 4;
-    const tint = new THREE.Color(pick(TINT[style])), trim = style === 'glass' ? DARK : WHITE, col = pick(NEON);
+    const tint = new THREE.Color(pick(TINT[style])), trim = style === 'glass' ? DARK : style === 'brick' ? STONE : WHITE, col = pick(NEON), ROOF = pick(ROOFS), fs = style === 'hotel' ? 'condo' : style;
     m.compose(new THREE.Vector3(b.x, baseY, b.z), q.setFromAxisAngle(UP, b.rot), ONE);
     const glow = (x, y, z, sx, sy, sz, c = col) => neon.push([m.clone().multiply(new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion(), new THREE.Vector3(sx, sy, sz))), c]);
     P.shop.walls(m, hw, hd, 0, GH, nx / 4, nz / 4, 0, 1, tint.clone().lerp(WHITE, 0.5), u0);
-    P[style].walls(m, hw, hd, GH, y1, nx / 4, nz / 4, 0, f1 / 4, tint, u0);
+    P[fs].walls(m, hw, hd, GH, y1, nx / 4, nz / 4, 0, f1 / 4, tint, u0);
     if (back) {
       P.plain.box(m, -hw - 0.3, hw + 0.3, y1, y1 + 0.5, -hd - 0.3, hd + 0.3, trim, ROOF); // Terrasse auf dem Rücksprung
       for (const [ex, ez] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) glow(ex * (hw + 0.05), (GH + y1) / 2, ez * (hd + 0.05), 0.28, y1 - GH, 0.28);
       w *= sb; d *= sb; hw *= sb; hd *= sb;
-      P[style].walls(m, hw, hd, y1 + 0.5, top, nx * sb / 4, nz * sb / 4, f1 / 4, (floors - 1) / 4, tint, u0);
+      P[fs].walls(m, hw, hd, y1 + 0.5, top, nx * sb / 4, nz * sb / 4, f1 / 4, (floors - 1) / 4, tint, u0);
     }
     P.plain.box(m, -hw - 0.45, hw + 0.45, GH - 0.11, GH + 0.11, -hd - 0.45, hd + 0.45, trim);       // Vordach über den Läden
     P.plain.box(m, -hw - 0.3, hw + 0.3, top, top + 0.55, -hd - 0.3, hd + 0.3, trim, ROOF);         // Attika + Dachfläche
@@ -236,12 +275,38 @@ export function makeBuildings(city, baseY, hi = false) {
         glow(0, (GH + 0.9 + top + 2.1) / 2, hd + 0.79, 0.14, top + 1.2 - GH, 0.08);
       }
     }
-    if (style === 'condo') for (let f = 1; f < floors; f++) for (const s of [-1, 1]) { // Balkone vorn und hinten
+    if (!tower && floors >= 3 && style !== 'garage' && r() < 0.4) { // Wassertank aus Holz auf Stahlstelzen
+      const x = (r() - 0.5) * (w - 5), z = (r() - 0.5) * (d - 5), y = top + 0.55;
+      for (const [lx, lz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) P.plain.box(m, x + lx * 0.85 - 0.07, x + lx * 0.85 + 0.07, y, y + 1.7, z + lz * 0.85 - 0.07, z + lz * 0.85 + 0.07, IRON);
+      P.plain.prism(m, x, z, 1.25, y + 1.7, y + 4.3, 12, WOOD, WOODTOP);
+      P.plain.prism(m, x, z, 0.35, y + 4.3, y + 4.8, 6, IRON);
+    }
+    if (style === 'brick') {
+      P.plain.box(m, -hw - 0.45, hw + 0.45, top - 0.6, top + 0.1, -hd - 0.45, hd + 0.45, STONE, ROOF); // Kranzgesims
+      if (floors >= 3 && r() < 0.6) { // Feuertreppe vorn: Podest je Geschoss mit Geländer
+        const fx = (r() < 0.5 ? -1 : 1) * Math.max(0, hw - 2.6);
+        for (let f = 1; f < floors; f++) {
+          const y = GH + (f - 1) * FH;
+          P.plain.box(m, fx - 1.7, fx + 1.7, y - 0.06, y, hd, hd + 1.15, IRON);
+          for (const yy of [y + 0.5, y + 1.0]) P.plain.box(m, fx - 1.7, fx + 1.7, yy - 0.03, yy + 0.03, hd + 1.1, hd + 1.15, IRON);
+          for (const xx of [fx - 1.7, fx + 1.68]) P.plain.box(m, xx, xx + 0.04, y, y + FH, hd + 1.1, hd + 1.15, IRON);
+        }
+      }
+    }
+    if (style === 'garage') for (let k = 0; k < 3; k++) { // Autos auf dem Parkdeck
+      const x = (r() - 0.5) * (w - 5), z = (r() - 0.5) * (d - 7), c = new THREE.Color(pick([0x8a1c1c, 0xd8d8d8, 0x1c3a6a, 0x2a2a2a, 0x9a9a9a, 0xc7a020]));
+      P.plain.box(m, x - 0.9, x + 0.9, top + 0.55, top + 1.25, z - 2.1, z + 2.1, c); P.plain.box(m, x - 0.8, x + 0.8, top + 1.25, top + 1.85, z - 1.1, z + 0.9, c.clone().multiplyScalar(0.55));
+    }
+    if (style === 'hotel') { // Leuchtschild auf dem Dach, zur Küste
+      P.plain.box(m, -hw * 0.45, hw * 0.45, top + 0.55, top + 4.2, hd - 1.2, hd - 0.9, DARK);
+      glow(0, top + 2.4, hd - 0.85, hw * 0.85, 2.6, 0.08);
+    }
+    if (style === 'condo' || style === 'hotel') for (let f = 1; f < floors; f++) for (const s of [-1, 1]) { // Balkone vorn und hinten
       const y = GH + (f - 1) * FH, z0 = s * hd, z1 = s * (hd + 1.3);
       P.plain.box(m, -hw + 0.5, hw - 0.5, y - 0.14, y, Math.min(z0, z1), Math.max(z0, z1), WHITE);
       P.plain.box(m, -hw + 0.5, hw - 0.5, y, y + 1.05, Math.min(z1, z1 - s * 0.06), Math.max(z1, z1 - s * 0.06), RAIL);
     }
   }
-  const mats = { deco: facade('deco', r), condo: facade('condo', r), office: facade('office', r), glass: facade('glass', r), shop: shopfront(r), plain: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }) };
-  return { meshes: Object.keys(P).map(k => P[k].mesh(mats[k])), heights, neon, lit: [mats.deco, mats.condo, mats.office, mats.glass, mats.shop] };
+  const mats = { deco: facade('deco', r), condo: facade('condo', r), office: facade('office', r), glass: facade('glass', r), brick: facade('brick', r), garage: facade('garage', r), shop: shopfront(r), plain: stdMat({ vertexColors: true, roughness: 0.85 }) };
+  return { meshes: Object.keys(P).filter(k => P[k].p.length).map(k => P[k].mesh(mats[k])), heights, neon, lit: Object.values(mats).filter(m => m.emissiveMap) };
 }

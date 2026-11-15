@@ -2,7 +2,7 @@
 // Aufbau per direktem Zugriff auf den Serverzustand (place), geprüft wird über das Netzprotokoll.
 import assert from 'node:assert/strict';
 import { io as connect } from 'socket.io-client';
-import { MAX_PLAYERS, WEAPONS, AVATARS, buildCity, node } from '../client/js/shared.js';
+import { MAX_PLAYERS, WEAPONS, AVATARS, buildCity, node, RIVER, JUMPS, ROAD, roadCenter, riverY } from '../client/js/shared.js';
 
 process.env.PORT ||= '3987';
 const { httpServer, io, rooms } = await import('./server.js');
@@ -157,9 +157,12 @@ step('Fahndung, Stadtwache, Hubschrauber');
 
 // --- Verkehr fließt (bleibt nicht hinter geparkten Autos hängen)
 const traffic = room.vehicles.filter(q => q.traffic), from = traffic.map(q => [q.x, q.z]);
-await sleep(4000);
+const atJump = (x, z) => z > RIVER.z0 - 1 && z < RIVER.z1 + 1 && JUMPS.some(i => Math.abs(x - roadCenter(i)) < ROAD / 2);
+for (let k = 0; k < 40; k++) { await sleep(100); for (const q of traffic) assert(!atJump(q.x, q.z), 'Verkehr fährt in die Lücke einer Sprungrampe'); }
 const moving = traffic.filter((q, i) => Math.hypot(q.x - from[i][0], q.z - from[i][1]) > 8).length;
 assert(moving >= traffic.length - 2, `Verkehr steht: nur ${moving} von ${traffic.length} fahren`);
+assert(room.peds.every(p => buildCity().blocks[p.block].type !== 'river'), 'Passanten auf Flussblock');
+assert.equal(riverY(0, (RIVER.z0 + RIVER.z1) / 2), RIVER.bed); assert.equal(riverY(0, RIVER.z0 - 1), 0); assert(riverY(0, RIVER.z0 + 5) < 0 && riverY(0, RIVER.z0 + 5) > RIVER.bed);
 step('Verkehr');
 
 // --- Raum voll

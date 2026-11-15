@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { HALF, SIZE, BEACH, BLOCK, WALK } from './shared.js';
+import { HALF, SIZE, BEACH, BLOCK, WALK, ROAD, RIVER, BRIDGES, BRIDGE_HALF, JUMPS, roadCenter } from './shared.js';
 
 // HUD-Teile, die nur DOM/Canvas anfassen: Minikarte, Namensschilder, Sprechblasen, Meldungen, Punkteliste.
 const $ = (id) => document.getElementById(id), { clamp } = THREE.MathUtils;
@@ -26,6 +26,10 @@ export class Hud {
       g.fillStyle = '#4b5056'; g.fillRect(b.x0, b.z0, BLOCK, BLOCK);
       g.fillStyle = b.type === 'park' ? '#33503a' : '#3b3f45'; g.fillRect(b.x0 + WALK, b.z0 + WALK, BLOCK - 2 * WALK, BLOCK - 2 * WALK);
     }
+    const rh = RIVER.z1 - RIVER.z0; // Fluss, Brücken (Fahrbahn + Gehweg), gelbe Sprungrampen
+    g.fillStyle = '#1d3550'; g.fillRect(-HALF, RIVER.z0, SIZE, rh);
+    for (const c of BRIDGES) { g.fillStyle = '#4b5056'; g.fillRect(c - BRIDGE_HALF, RIVER.z0, 2 * BRIDGE_HALF, rh); g.fillStyle = '#8a8f94'; g.fillRect(c - ROAD / 2, RIVER.z0, ROAD, rh); }
+    g.fillStyle = '#e0b020'; for (const i of JUMPS) for (const z of [RIVER.z0 - 6, RIVER.z1 + 3]) g.fillRect(roadCenter(i) - ROAD / 2, z, ROAD, 3);
     g.fillStyle = '#2e3136';
     city.solids.slice(0, city.buildings.length).forEach(s => g.fillRect(s.x0, s.z0, s.x1 - s.x0, s.z1 - s.z0));
     return c;

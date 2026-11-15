@@ -1,10 +1,11 @@
 import * as THREE from 'three';
+import { stdMat } from './gfx.js';
 
 // Hubschrauber der Stadtwache aus Grundformen (Nase zeigt nach +z, Ursprung in der Kabinenmitte).
 // Liefert die beweglichen Teile; Seil und Lichtkegel haben Höhe 1 und werden pro Bild auf die Flughöhe gestreckt.
 export function makeHeli(scene) {
   const g = new THREE.Group();
-  const mat = (color, o) => new THREE.MeshStandardMaterial({ color, roughness: 0.5, ...o });
+  const mat = (color, o) => stdMat({ color, roughness: 0.5, ...o });
   const white = mat(0xf1f3f6), blue = mat(0x1f4f9e), dark = mat(0x1a1c21, { roughness: 0.8 }), glass = mat(0x0b141f, { roughness: 0.12, metalness: 0.7 });
   const ball = new THREE.SphereGeometry(1, 20, 14), box = new THREE.BoxGeometry(1, 1, 1);
   const add = (geo, m, pos, scale = [1, 1, 1], parent = g) => {

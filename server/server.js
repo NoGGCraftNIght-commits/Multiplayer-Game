@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { Server } from 'socket.io';
 import {
   MAX_PLAYERS, TICK_HZ, PED_HZ, A, AIM_FLAG, AVATARS, COPS, WEAPONS, VEHICLES, VEHICLE_TYPES, CAR_HIT_DAMAGE, GRID, CELL, HALF, BEACH, LANE, ROAD,
-  buildCity, sidewalkLoop, node, rng, clamp, pushOut, sanitizeName, sanitizeRoom,
+  buildCity, sidewalkLoop, node, roadOpen, rng, clamp, pushOut, sanitizeName, sanitizeRoom,
 } from '../client/js/shared.js';
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -104,8 +104,10 @@ function newCode() {
   return s;
 }
 
+const walkable = city.blocks.map((b, i) => i).filter(i => city.blocks[i].type !== 'river'); // Flussblöcke: Gehweg endet am Kanal
+
 function randomSidewalkSpot(rand = Math.random) {
-  const blocks = city.blocks;
+  const blocks = walkable.map(i => city.blocks[i]);
   const b = blocks[Math.floor(rand() * blocks.length)];
   const loop = sidewalkLoop(b);
   const i = Math.floor(rand() * 4), [ax, az] = loop[i], [bx, bz] = loop[(i + 1) % 4], t = rand();
@@ -130,7 +132,7 @@ function createRoom(code) {
   }
   // Passanten
   for (let k = 0; k < PEDS_PER_ROOM; k++) {
-    const block = Math.floor(rand() * city.blocks.length);
+    const block = walkable[Math.floor(rand() * walkable.length)];
     room.peds.push({ id: k, avatar: Math.floor(rand() * AVATARS.length), block, s: rand() * 4 * 44, dir: rand() < 0.5 ? 1 : -1,
       base: 1.0 + rand() * 0.35, state: 'walk', timer: 3 + rand() * 10, x: 0, z: 0, yaw: 0, anim: A.walk, fleeFrom: null });
   }
@@ -157,7 +159,7 @@ function planTraffic(v, rand) {
   const T = v.traffic;
   while (T.path.length < 12) {
     const [i, j] = T.at, [pi, pj] = T.from;
-    const opts = [[i + 1, j], [i - 1, j], [i, j + 1], [i, j - 1]].filter(([a, b]) => a >= 0 && b >= 0 && a <= GRID && b <= GRID);
+    const opts = [[i + 1, j], [i - 1, j], [i, j + 1], [i, j - 1]].filter(([a, b]) => a >= 0 && b >= 0 && a <= GRID && b <= GRID && roadOpen(i, j, a, b));
     let next = opts.filter(([a, b]) => !(a === pi && b === pj));
     if (!next.length) next = opts;
     const [ni, nj] = next[Math.floor(rand() * next.length)];
@@ -295,7 +297,7 @@ io.on('connection', (socket) => {
       if (now - me.fixT > 200) { me.fixT = now; socket.emit('fix', [r2(me.x), r2(me.z)]); }
       return;
     }
-    me.budget -= d; me.x = nx; me.y = clamp(y, -1, 3); me.z = nz;
+    me.budget -= d; me.x = nx; me.y = clamp(y, -4, 3); me.z = nz; // y bis -4: Flussbett
   });
 
   // Fahrzeugzustand vom Fahrer: [vid,x,y,z,qx,qy,qz,qw,steer,sendezeit]
@@ -322,7 +324,7 @@ io.on('connection', (socket) => {
     }
     v.vx = vx; v.vz = vz; v.vok = ok;
     [, , v.y, , v.qx, v.qy, v.qz, v.qw, v.steer] = s;
-    v.x = x; v.z = z; v.y = clamp(v.y, -2, 100);
+    v.x = x; v.z = z; v.y = clamp(v.y, -4, 100);
     v.moved = now;
     me.x = v.x; me.z = v.z; me.y = v.y;
   });
@@ -557,7 +559,7 @@ function stepWanted(room, dt, now) {
       c.node ||= [roadIdx(c.x), roadIdx(c.z)];
       const [nx, nz] = node(...c.node), far = (q) => Math.hypot(node(...q)[0] - t.x, node(...q)[1] - t.z);
       if (Math.hypot(nx - c.x, nz - c.z) < 3) {
-        const [i, j] = c.node, next = [[i + 1, j], [i - 1, j], [i, j + 1], [i, j - 1]].filter(([a, b]) => a >= 0 && b >= 0 && a <= GRID && b <= GRID).sort((a, b) => far(a) - far(b))[0];
+        const [i, j] = c.node, next = [[i + 1, j], [i - 1, j], [i, j + 1], [i, j - 1]].filter(([a, b]) => a >= 0 && b >= 0 && a <= GRID && b <= GRID && roadOpen(i, j, a, b)).sort((a, b) => far(a) - far(b))[0];
         if (far(next) < far(c.node)) c.node = next; else c.node = 0; // näher geht es über Straßen nicht: direkt weiter
       }
       if (c.node) [gx, gz] = node(...c.node);
