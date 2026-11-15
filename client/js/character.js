@@ -7,6 +7,7 @@ import { AVATARS, ANIMS, WEAPONS } from './shared.js';
 // ein Skelett, deshalb liegt jeder Clip nur einmal in avatar_clips.glb.
 const ONCE = new Set(['interact', 'wave', 'no', 'shrug']);
 const FEMALE = { idle: 'f_idle', walk: 'f_walk', run: 'f_run' };
+const PACE = { walk: 1.01, run: 2.89, sprint: 5.83, f_walk: 1.22, f_run: 2.75 }; // m/s, die ein Clip von Natur aus zurücklegt
 const UP = new THREE.Vector3(0, 1, 0), ZERO = new THREE.Vector3();
 const _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _d = new THREE.Vector3(), _m = new THREE.Matrix4();
 const boxes = {}, rigs = {};
@@ -87,13 +88,15 @@ export class Character {
     return this.blaster.localToWorld(out.copy(this.blaster.userData.muzzle));
   }
 
-  play(name, fade = 0.2, speed = 1) {
+  // mps = Bodentempo in m/s: die Schrittfrequenz passt sich an, damit die Füße nicht rutschen
+  play(name, fade = 0.2, mps = 0) {
     if (typeof name === 'number') name = ANIMS[name] || 'idle';
     this.down = name === 'down';
-    let clip = this.down ? 'idle' : name;
-    if (name === 'jump' || name === 'fall') { clip = 'run'; speed = 0.35; } // in der Luft: gedehnter Laufschritt
+    let clip = this.down ? 'idle' : name, speed = 1;
     if (this.female && FEMALE[clip]) clip = FEMALE[clip];
     if (!clips[clip]) clip = this.female ? 'f_idle' : 'idle';
+    if (name === 'jump' || name === 'fall') { clip = this.female ? 'f_run' : 'run'; speed = 0.35; } // in der Luft: gedehnter Laufschritt
+    else if (mps && PACE[clip]) speed = THREE.MathUtils.clamp(mps / PACE[clip], 0.6, 1.7);
     const a = (this.actions[clip] ||= this.mixer.clipAction(clips[clip]));
     this.currentName = name;
     if (this.current === a) { a.timeScale = speed; return; }

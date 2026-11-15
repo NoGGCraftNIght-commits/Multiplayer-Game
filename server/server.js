@@ -16,7 +16,7 @@ const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 const IDLES = [A.idle, A.look, A.phone, A.photo, A.talk, A.laugh, A.dance, A.clap]; // Passanten stehen nicht nur herum
 const CLIENT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../client');
 const SEED = 1337;           // alle Räume nutzen dieselbe Stadt
-const PEDS_PER_ROOM = 44;
+const PEDS_PER_ROOM = 70;
 const TRAFFIC_PER_ROOM = 12;
 const RESPAWN_MS = 4000;
 
@@ -126,13 +126,14 @@ function stepTraffic(room, v, dt) {
   const T = v.traffic;
   let target = T.path[T.cur + 1];
   if (!target) return;
-  // vor Hindernissen bremsen (andere Autos, Spieler, Passanten)
+  // vor Hindernissen im eigenen Fahrstreifen bremsen (Korridor statt Kegel: geparkte Autos am Rand zählen nicht)
   const dx0 = target[0] - v.x, dz0 = target[1] - v.z, l0 = Math.hypot(dx0, dz0) || 1, fx = dx0 / l0, fz = dz0 / l0;
-  let blocked = false;
-  const ahead = (x, z, dist) => { const ax = x - v.x, az = z - v.z, d = Math.hypot(ax, az); return d < dist && d > 0.1 && (ax * fx + az * fz) / d > 0.75; };
-  for (const o of room.vehicles) if (o !== v && ahead(o.x, o.z, 9)) { blocked = true; break; }
-  if (!blocked) for (const p of room.players.values()) if (p.alive && ahead(p.x, p.z, 7)) { blocked = true; break; }
-  if (!blocked) for (const p of room.peds) if (ahead(p.x, p.z, 6)) { blocked = true; break; }
+  const ahead = (x, z, dist) => { const ax = x - v.x, az = z - v.z, f = ax * fx + az * fz; return f > 0.5 && f < dist && Math.abs(ax * fz - az * fx) < 1.7; };
+  let car = false, person = false;
+  for (const o of room.vehicles) if (o !== v && ahead(o.x, o.z, 9)) { car = true; break; }
+  for (const p of room.players.values()) if (p.alive && !p.veh && ahead(p.x, p.z, 7)) { person = true; break; }
+  T.wait = car ? T.wait + dt : 0; // steht dauerhaft ein Auto im Weg (verlassen, Stau über Kreuz), nach 5 s vorbeischieben
+  const blocked = person || (car && T.wait < 5);
   T.v = blocked ? Math.max(0, (T.v || 0) - 20 * dt) : Math.min(T.speed, (T.v || 0) + 4 * dt);
   let move = T.v * dt;
   while (move > 0 && target) {

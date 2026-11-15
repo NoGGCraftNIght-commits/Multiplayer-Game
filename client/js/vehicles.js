@@ -1,13 +1,14 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import { assets } from './assets.js';
-import { VEHICLES, VEHICLE_TYPES, CAR_SCALE, HALF, SIZE, BLOCK, BEACH } from './shared.js';
+import { VEHICLES, VEHICLE_TYPES, CAR_SIZE, HALF, SIZE, BLOCK, BEACH } from './shared.js';
 import { SLAB } from './world.js';
 import { Interp } from './net.js';
 
-const HC = 1.0;           // Höhe des Physik-Schwerpunkts über Modellboden (m)
-const WHEEL_R = 0.3 * CAR_SCALE;
-const REST = 0.35;
+const SCALE = new THREE.Vector3(...CAR_SIZE);
+const HC = 0.62;          // Höhe des Physik-Schwerpunkts über Modellboden (m)
+const WHEEL_R = 0.3 * SCALE.y;
+const REST = 0.3, SAG = 0.065; // Federweg; SAG = Einfedern im Stand (g / (4 * Federhärte))
 
 export class Vehicles {
   constructor(scene, city, heights) {
@@ -31,22 +32,24 @@ export class Vehicles {
     const type = VEHICLE_TYPES[s[10]] || 'sedan';
     const cfg = VEHICLES[type];
     const model = assets.models[type].scene.clone(true);
-    model.scale.setScalar(CAR_SCALE);
+    model.scale.copy(SCALE);
     const group = new THREE.Group(); group.add(model); this.scene.add(group);
+    // Räder aus der gestreckten Karosserie lösen (sonst würden sie oval); das Reserverad am Heck zählt nicht
     const wheels = [];
-    model.traverse(o => { if (o.name.startsWith('wheel-')) wheels.push({ node: o, front: o.name.includes('front'), base: o.quaternion.clone() }); });
-    const bb = new THREE.Box3().setFromObject(model);
-    const half = new CANNON.Vec3((bb.max.x - bb.min.x) / 2 * 0.95, 0.55, (bb.max.z - bb.min.z) / 2 * 0.97);
+    model.traverse(o => { if (/^wheel-(front|back)-(left|right)$/.test(o.name)) wheels.push({ node: o, front: o.name.includes('front'), base: o.quaternion.clone() }); });
+    for (const w of wheels) { w.node.position.multiply(SCALE); w.node.scale.multiplyScalar(SCALE.y); group.add(w.node); }
+    const bb = new THREE.Box3().setFromObject(group);
+    const half = new CANNON.Vec3((bb.max.x - bb.min.x) / 2 * 0.95, 0.36, (bb.max.z - bb.min.z) / 2 * 0.97);
     const body = new CANNON.Body({ type: CANNON.Body.KINEMATIC, mass: 0 });
-    body.addShape(new CANNON.Box(half), new CANNON.Vec3(0, 0.25, (bb.max.z + bb.min.z) / 2));
+    body.addShape(new CANNON.Box(half), new CANNON.Vec3(0, 0.12, (bb.max.z + bb.min.z) / 2));
     this.world.addBody(body);
     // Licht: Scheinwerfer (emissiv, leuchten nachts mit Bloom)
     const lightMat = new THREE.MeshStandardMaterial({ color: 0xfff6d8, emissive: 0xfff2c0, emissiveIntensity: 0.3 });
     const tailMat = new THREE.MeshStandardMaterial({ color: 0xff3030, emissive: 0xff2020, emissiveIntensity: 0.4 });
-    const hl = new THREE.BoxGeometry(0.35, 0.15, 0.05);
+    const hl = new THREE.BoxGeometry(0.3, 0.11, 0.05);
     for (const sx of [-1, 1]) {
-      const h = new THREE.Mesh(hl, lightMat); h.position.set(sx * half.x * 0.6, 0.85, bb.max.z + 0.01); group.add(h);
-      const t = new THREE.Mesh(hl, tailMat); t.position.set(sx * half.x * 0.65, 0.95, bb.min.z - 0.01); group.add(t);
+      const h = new THREE.Mesh(hl, lightMat); h.position.set(sx * half.x * 0.62, 0.6, bb.max.z + 0.01); group.add(h);
+      const t = new THREE.Mesh(hl, tailMat); t.position.set(sx * half.x * 0.66, 0.68, bb.min.z - 0.01); group.add(t);
     }
     const v = { id: s[0], type, cfg, group, model, wheels, body, half, bb, lightMat, tailMat, buf: new Interp(), driver: s[9], traffic: !!s[11], spin: 0, steer: 0, speed: 0,
       pos: new THREE.Vector3(s[1], s[2], s[3]), quat: new THREE.Quaternion(s[4], s[5], s[6], s[7]) };
@@ -75,15 +78,15 @@ export class Vehicles {
     body.type = CANNON.Body.DYNAMIC; body.mass = cfg.mass; body.updateMassProperties();
     body.angularDamping = 0.5; body.linearDamping = 0.02;
     body.velocity.setZero(); body.angularVelocity.setZero();
-    body.position.y += 0.3;
+    body.position.y += 0.12;
     const rv = new CANNON.RaycastVehicle({ chassisBody: body, indexRightAxis: 0, indexUpAxis: 1, indexForwardAxis: 2 });
     for (const w of v.wheels) {
-      const p = w.node.position;
+      const p = w.node.position; // Radmitte in Metern (Fahrzeugkoordinaten)
       rv.addWheel({
         radius: WHEEL_R, directionLocal: new CANNON.Vec3(0, -1, 0), axleLocal: new CANNON.Vec3(-1, 0, 0),
-        chassisConnectionPointLocal: new CANNON.Vec3(p.x * CAR_SCALE, p.y * CAR_SCALE - HC + 0.2, p.z * CAR_SCALE),
+        chassisConnectionPointLocal: new CANNON.Vec3(p.x, p.y - HC + REST - SAG, p.z),
         suspensionStiffness: 38, suspensionRestLength: REST, frictionSlip: cfg.grip, dampingRelaxation: 2.6, dampingCompression: 4.2,
-        maxSuspensionForce: 1e6, rollInfluence: 0.04, maxSuspensionTravel: 0.3, customSlidingRotationalSpeed: -30, useCustomSlidingRotationalSpeed: true,
+        maxSuspensionForce: 1e6, rollInfluence: 0.04, maxSuspensionTravel: 0.25, customSlidingRotationalSpeed: -30, useCustomSlidingRotationalSpeed: true,
       });
       rv.wheelInfos[rv.wheelInfos.length - 1].isFront = w.front;
     }
@@ -113,17 +116,18 @@ export class Vehicles {
     if (input.throttle > 0) { if (speed < -1) brake = 60; else if (speed < cfg.vmax) engine = cfg.force * input.throttle; }
     else if (input.throttle < 0) { if (speed > 1) brake = 70 * -input.throttle; else if (speed > -12) engine = cfg.force * 0.6 * input.throttle; }
     else brake = 4;
+    this.braking = brake > 10 || !!input.handbrake;
     const steerMax = cfg.steer * (1 - Math.min(Math.abs(speed) / cfg.vmax, 1) * 0.6);
     v.steer += (input.steer * steerMax - v.steer) * Math.min(1, dt * 8);
     rv.wheelInfos.forEach((w, i) => {
       if (w.isFront) rv.setSteeringValue(-v.steer, i);
-      rv.applyEngineForce(w.isFront ? 0 : -engine, i); // negative Kraft = vorwärts (+z)
+      rv.applyEngineForce(w.isFront ? 0 : -engine / 2, i); // negative Kraft = vorwärts (+z); je Hinterrad die halbe Motorkraft
       const hb = input.handbrake && !w.isFront;
       rv.setBrake(hb ? 90 : brake, i);
       w.frictionSlip = hb ? cfg.grip * 0.45 : cfg.grip;
     });
     // Abtrieb: mehr Bodenhaftung bei Tempo
-    b.applyForce(new CANNON.Vec3(0, -Math.abs(speed) * cfg.mass * 0.04, 0), b.position);
+    b.applyForce(new CANNON.Vec3(0, -Math.abs(speed) * cfg.mass * 0.04, 0)); // im Schwerpunkt (cannon-es: Angriffspunkt ist relativ, nicht in Weltkoordinaten)
     // Umgekippt? -> nach 1,5 s automatisch aufrichten
     const upv = new CANNON.Vec3(); b.quaternion.vmult(new CANNON.Vec3(0, 1, 0), upv);
     this.mine.flipT = upv.y < 0.35 && Math.abs(speed) < 3 ? this.mine.flipT + dt : 0;
@@ -172,7 +176,7 @@ export class Vehicles {
       }
       const lit = night > 0.4 && (v.driver || v.traffic);
       v.lightMat.emissiveIntensity = lit ? 4 : 0.3;
-      v.tailMat.emissiveIntensity = lit ? 2.5 : (v === self && this.braking ? 3 : 0.4);
+      v.tailMat.emissiveIntensity = v === self && this.braking ? 4 : lit ? 2.5 : 0.4;
     }
   }
 

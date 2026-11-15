@@ -5,8 +5,6 @@ import { AVATARS, VEHICLE_TYPES, WEAPONS } from './shared.js';
 
 export const MODELS = [
   ...AVATARS, 'avatar_clips', ...VEHICLE_TYPES, ...WEAPONS.map(w => w.model),
-  'building_a', 'building_b', 'building_c', 'building_d', 'building_e', 'building_f', 'building_g', 'building_h',
-  'skyscraper_a', 'skyscraper_b', 'skyscraper_c',
   'tree_oak', 'tree_pine', 'tree_fat', 'tree_palm', 'bush', 'bush_large', 'rock_small', 'barrel', 'crate',
 ];
 export const SOUNDS = ['shoot', 'hit', 'impact', 'land', 'step', 'ui', 'confirm', 'kill', 'hurt', 'coin', 'dash'];

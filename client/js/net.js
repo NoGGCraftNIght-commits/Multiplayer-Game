@@ -19,12 +19,10 @@ export class Interp {
     if (t <= b[0].t) return [b[0].s, b[0].s, 0];
     for (let i = b.length - 1; i >= 0; i--) {
       if (b[i].t <= t) {
-        const n = b[i + 1];
-        if (!n) { // keine neueren Daten: max. 250 ms extrapolieren wäre riskant -> letzten Stand halten
-          return [b[i].s, b[i].s, 0];
-        }
-        if (i > 2) b.splice(0, i - 2);
-        return [b[i].s, n.s, (t - b[i].t) / (n.t - b[i].t)];
+        const a = b[i], n = b[i + 1];
+        if (!n) return [a.s, a.s, 0]; // keine neueren Daten: letzten Stand halten statt riskant zu extrapolieren
+        if (i > 2) b.splice(0, i - 2); // danach stimmen die Indizes nicht mehr -> a/n vorher merken
+        return [a.s, n.s, (t - a.t) / (n.t - a.t)];
       }
     }
     return null;

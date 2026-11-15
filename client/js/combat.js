@@ -10,7 +10,7 @@ const SHAPE = { water: [0.05, 0.3], dart: [0.035, 0.22], confetti: [0.05, 0.05],
 const SOUND = { water: 1.5, dart: 0.9, confetti: 0.6, paint: 0.45 };
 
 export class Combat {
-  // env: { scene, city, heights, groundY(x,z), vehicles, audio, targets() -> [{t,id,x,y,z}], onHit(target, weapon) }
+  // env: { scene, city, heights, groundY(x,z), vehicles, audio, targets() -> [{t,id,x,y,z,me?}], onHit(target, weapon) }
   constructor(env) {
     Object.assign(this, env);
     this.weapon = 0; this.ammo = WEAPONS.map(w => w.mag); this.cool = 0; this.reloadT = 0;
@@ -112,7 +112,7 @@ export class Combat {
       for (let k = 0; k < steps && !dead; k++) {
         s.p.addScaledVector(s.v, dt / steps);
         for (const t of targets) { // Zylinder um die Figur
-          if (s.p.y < t.y || s.p.y > t.y + 1.85 || (s.p.x - t.x) ** 2 + (s.p.z - t.z) ** 2 > 0.2) continue;
+          if ((s.mine && t.me) || s.p.y < t.y || s.p.y > t.y + 1.85 || (s.p.x - t.x) ** 2 + (s.p.z - t.z) ** 2 > 0.2) continue;
           this.impact(s, n, t); if (s.mine) this.onHit(t, s.wi); dead = true; break;
         }
         if (!dead && this.solidAt(s.p.x, s.p.y, s.p.z, n)) { this.impact(s, n, null); dead = true; }

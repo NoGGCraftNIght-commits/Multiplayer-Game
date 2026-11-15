@@ -40,7 +40,7 @@ export const VEHICLES = {
   ambulance:        { name: 'Rettungswagen', mass: 2400, force: 6600, vmax: 36, grip: 2.8, steer: 0.45 },
 };
 export const VEHICLE_TYPES = Object.keys(VEHICLES);
-export const CAR_SCALE = 1.8;   // Kenney-Modelle -> Meter
+export const CAR_SIZE = [1.2, 1.12, 1.5]; // Kenney-Modelle auf echte Maße strecken: Breite, Höhe, Länge (Limousine 1,8 x 1,46 x 3,8 m)
 
 // ---------- deterministischer Zufall ----------
 export function rng(seed) {
@@ -63,7 +63,7 @@ export const CELL = BLOCK + ROAD;
 export const SIZE = GRID * CELL + ROAD;
 export const HALF = SIZE / 2;
 export const BEACH = 46;        // Sandstreifen östlich der Stadt, dahinter das Meer
-export const LANE = 3.5;        // Fahrspur-Versatz von der Mittellinie (Rechtsverkehr)
+export const LANE = 2.3;        // Fahrspur-Versatz von der Mittellinie (Rechtsverkehr); außen daneben liegt die Parkspur
 
 export const roadCenter = (i) => -HALF + ROAD / 2 + i * CELL;            // i = 0..GRID
 export const blockMin = (i) => -HALF + ROAD + i * CELL;                  // i = 0..GRID-1
@@ -87,22 +87,21 @@ export function buildCity(seed = 1337) {
       }
       continue;
     }
-    // 2x2 Grundstücke, Downtown: teilweise ein Hochhaus über den ganzen Block
+    // 2x2 Grundstücke, Downtown: teilweise ein Turm über den ganzen Block.
+    // style + floors bestimmen Fassade und Höhe (siehe buildings.js); an der Strandpromenade stehen Art-déco-Hotels
     if (type === 'downtown' && r() < 0.55) {
-      const kind = ['skyscraper_a', 'skyscraper_b', 'skyscraper_c'][Math.floor(r() * 3)];
       const w = inner - 6;
-      buildings.push({ kind, x: ix0 + inner / 2, z: iz0 + inner / 2, w, d: w, rot: Math.floor(r() * 4) * Math.PI / 2 });
+      buildings.push({ style: r() < 0.6 ? 'glass' : 'condo', floors: 22 + Math.floor(r() * 18), x: ix0 + inner / 2, z: iz0 + inner / 2, w, d: w, rot: Math.floor(r() * 4) * Math.PI / 2 });
     } else {
       const lot = inner / 2;
       for (let lx = 0; lx < 2; lx++) for (let lz = 0; lz < 2; lz++) {
-        const pool = type === 'downtown'
-          ? ['building_f', 'building_g', 'building_a', 'building_b', 'skyscraper_a']
-          : ['building_a', 'building_b', 'building_c', 'building_d', 'building_e', 'building_h', 'building_f', 'building_g'];
-        const kind = pool[Math.floor(r() * pool.length)];
-        // Front zeigt zur nächsten Straße (Modelle schauen nach +z)
+        const pool = type === 'downtown' ? ['office', 'glass', 'condo', 'office'] : bx === GRID - 1 ? ['deco', 'deco', 'deco', 'condo'] : ['deco', 'deco', 'condo', 'office'];
+        const style = pool[Math.floor(r() * pool.length)];
+        const floors = type === 'downtown' ? 7 + Math.floor(r() * 9) : style === 'condo' ? 4 + Math.floor(r() * 6) : 2 + Math.floor(r() * 4);
+        // Front zeigt zur nächsten Straße (+z = vorn)
         const rot = lz === 1 ? 0 : Math.PI;
         const w = lot - 2.5 - r() * 2, dd = lot - 2.5 - r() * 2;
-        buildings.push({ kind, x: ix0 + lot * lx + lot / 2, z: iz0 + lot * lz + lot / 2, w, d: dd, rot });
+        buildings.push({ style, floors, x: ix0 + lot * lx + lot / 2, z: iz0 + lot * lz + lot / 2, w, d: dd, rot });
       }
     }
     // Straßenbäume an den Gehweg-Ecken
@@ -114,14 +113,14 @@ export function buildCity(seed = 1337) {
   const beach = [];
   for (let z = -HALF + 8; z < HALF - 8; z += 11) props.push({ kind: 'tree_palm', x: HALF + 3 + r() * 2, z: z + r() * 4, rot: r() * 6.28, s: 5 + r() * 2, solid: true });
   for (let k = 0; k < 70; k++) beach.push({ x: HALF + 10 + r() * (BEACH - 18), z: -HALF + 6 + r() * (SIZE - 12), rot: r() * 6.28, c: Math.floor(r() * 6) });
-  // Parkplätze am Straßenrand (Parkspur = 5.5m neben Mittellinie)
+  // Parkplätze am Straßenrand (Parkspur = 5,5 m neben der Mittellinie)
   for (let i = 0; i <= GRID; i++) for (let j = 0; j < GRID; j++) {
     if (r() < 0.45) {
       const side = r() < 0.5 ? 1 : -1;
       const along = blockMin(j) + 8 + r() * (BLOCK - 16);
       // Straße entlang z (x konstant) bzw. entlang x
-      if (r() < 0.5) parking.push({ x: roadCenter(i) + side * 5.3, z: along, yaw: side > 0 ? 0 : Math.PI });
-      else parking.push({ x: along, z: roadCenter(i) + side * 5.3, yaw: side > 0 ? Math.PI / 2 : -Math.PI / 2 });
+      if (r() < 0.5) parking.push({ x: roadCenter(i) + side * 5.5, z: along, yaw: side > 0 ? Math.PI : 0 }); // in Fahrtrichtung der Seite geparkt
+      else parking.push({ x: along, z: roadCenter(i) + side * 5.5, yaw: side > 0 ? Math.PI / 2 : -Math.PI / 2 });
     }
   }
   // Kollisionsrechtecke (achsenparallel; Gebäude sind 0/90/180/270° gedreht)

@@ -45,7 +45,7 @@ export class Input {
     addEventListener('keydown', (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
       if (this.mode !== 'desktop') this.setMode('desktop');
-      if (e.code === 'Tab' || e.code === 'Space') e.preventDefault();
+      if (this.enabled && (e.code === 'Tab' || e.code === 'Space')) e.preventDefault();
       if (!e.repeat && map[e.code]) this.edges.add(map[e.code]);
       this.keys.add(e.code);
     });
@@ -60,8 +60,10 @@ export class Input {
     });
     addEventListener('pointerup', (e) => { if (e.pointerType === 'mouse') { if (e.button === 0) this.fireHeld = false; if (e.button === 2) this.aimHeld = false; } });
     addEventListener('contextmenu', (e) => e.preventDefault());
+    // direkt nach dem Fangen meldet der Browser einen Sprung (Cursor wird zentriert) -> kurz ignorieren
+    document.addEventListener('pointerlockchange', () => { this.lockT = performance.now(); });
     addEventListener('mousemove', (e) => {
-      if (document.pointerLockElement === this.canvas) { this.look.x += e.movementX * 0.0022 * this.sens; this.look.y += e.movementY * 0.0022 * this.sens; }
+      if (document.pointerLockElement === this.canvas && performance.now() - this.lockT > 150) { this.look.x += e.movementX * 0.0022 * this.sens; this.look.y += e.movementY * 0.0022 * this.sens; }
     });
     addEventListener('wheel', (e) => { if (this.enabled) this.edges.add(e.deltaY > 0 ? 'weaponNext' : 'weaponPrev'); }, { passive: true });
   }
