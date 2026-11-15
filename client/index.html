@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#151826">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>Spritzstadt</title>
+<title>Grand Tor Auto</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Oswald:wght@400;500;600&display=swap">
 <link rel="stylesheet" href="css/style.css">
@@ -25,7 +25,7 @@
 
 <!-- Ladebildschirm -->
 <div id="loading" class="screen">
-  <div class="logo">SPRITZ<span>STADT</span></div>
+  <div class="logo">GRAND TOR <span>AUTO</span></div>
   <div class="bar"><i id="loadbar"></i></div>
   <p id="loadtext">Lade Stadt …</p>
 </div>
@@ -33,7 +33,7 @@
 <!-- Hauptmenü -->
 <div id="menu" class="screen hidden">
   <div class="panel">
-    <div class="logo">SPRITZ<span>STADT</span></div>
+    <div class="logo">GRAND TOR <span>AUTO</span></div>
     <p class="tagline">Offene Stadt. Schnelle Autos. Bunte Spritzer. Bis zu 16 Freunde pro Raum.</p>
     <div class="cols">
       <div class="col">
@@ -55,8 +55,7 @@
         <p id="menuError" class="error" role="alert"></p>
         <details id="advanced">
           <summary>Server</summary>
-          <label class="lbl" for="serverUrl">Server-Adresse</label>
-          <input id="serverUrl" placeholder="https://mein-server.example.com" inputmode="url">
+          <div id="roomList" class="roomlist" aria-live="polite"></div>
         </details>
       </div>
     </div>

@@ -1,4 +1,4 @@
-# Spritzstadt
+# Grand Tor Auto
 
 3D-Mehrspieler-Spiel für den Browser: eine offene Strandstadt, 42 Figuren, Autos mit Fahrphysik und Schaden,
 Spielzeug-Blaster (Wasser, Schaumpfeile, Konfetti, Farbe), Passanten, Verkehr, Fahndungssterne mit Stadtwache und
@@ -30,6 +30,10 @@ Ohne Server läuft das Spiel nicht: Er verwaltet Räume, Passanten, Verkehr, Ene
 
 ### Server
 
+Am schnellsten: auf render.com **New → Blueprint** und dieses Repository wählen (Datei `render.yaml`).
+Danach ist das Spiel unter der Render-Adresse direkt spielbar. Damit auch die GitHub-Pages-Seite ohne Eingabe
+verbindet, die Render-Adresse in `client/js/config.js` als `SERVER_URL` eintragen.
+
 Jeder Anbieter mit Node.js und WebSockets geht (z. B. Render, Railway, Fly.io, eigener Server).
 
 1. Das **ganze** Repository bereitstellen (der Server lädt `client/js/shared.js`).
@@ -46,8 +50,8 @@ Jeder Anbieter mit Node.js und WebSockets geht (z. B. Render, Railway, Fly.io, e
 3. Auf den Hauptzweig pushen. Der Workflow `.github/workflows/pages.yml` veröffentlicht den Ordner `client/`.
 4. Das Spiel liegt dann unter `https://dein-name.github.io/<repository>/`.
 
-Ohne Eintrag in `config.js` geht es auch: Server-Adresse im Menü unter „Server“ eintragen
-oder `?server=https://dein-server.example.com` an die Adresse hängen.
+Im Menü gibt es nur noch den Raumcode (leer = neuer Raum). „Server“ zeigt alle offenen Räume mit dem Namen
+ihres Erstellers; ein Klick tritt bei. Zum Testen geht weiter `?server=https://dein-server.example.com` an der Adresse.
 
 ## 3. Steuerung
 

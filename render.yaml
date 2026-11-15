@@ -1,0 +1,9 @@
+# Ein-Klick-Server auf Render (render.com → New → Blueprint → dieses Repository). Liefert auch das Spiel selbst aus.
+services:
+  - type: web
+    name: grand-tor-auto
+    runtime: node
+    plan: free
+    buildCommand: cd server && npm ci
+    startCommand: node server/server.js
+    healthCheckPath: /health

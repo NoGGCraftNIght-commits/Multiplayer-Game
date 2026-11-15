@@ -21,7 +21,7 @@ const place = (p, x, z) => Object.assign(p, { x, z, budget: 12 });
 
 // --- HTTP: Client wird ausgeliefert, kein Zugriff außerhalb von client/
 assert.equal(await (await fetch(url + '/health')).text(), 'ok');
-assert.match(await (await fetch(url + '/')).text(), /Spritzstadt/);
+assert.match(await (await fetch(url + '/')).text(), /Grand Tor Auto/);
 assert.notEqual((await fetch(url + '/..%2fserver%2fserver.js')).status, 200);
 step('HTTP');
 
@@ -34,6 +34,8 @@ assert(ra.vehicles.length > 20 && ra.vehicles.some(v => v[11]), 'geparkte Autos 
 const joined = once(a, 'pjoin');
 const rb = await join(b, { room: ra.room.toLowerCase(), name: 'Ben', avatar: 1, color: '#35c2ff' });
 assert.equal(rb.room, ra.room); assert.equal((await joined).name, 'Ben'); assert.equal(rb.players.length, 2);
+const list = await (await fetch(url + '/rooms')).json();
+assert(list.some(q => q.code === ra.room && q.host === 'Annascript' && q.n === 2), 'Raumliste zeigt Raum, Ersteller, Spielerzahl');
 step('Beitritt');
 
 const room = rooms.get(ra.room), all = [...room.players.values()], pa = all.find(p => p.id === ra.id), pb = all.find(p => p.id === rb.id);

@@ -32,6 +32,10 @@ const httpServer = http.createServer((req, res) => {
   let p;
   try { p = decodeURIComponent(new URL(req.url, 'http://x').pathname); } catch { res.writeHead(400); return res.end(); }
   if (p === '/health') { res.writeHead(200, { 'content-type': 'text/plain' }); return res.end('ok'); }
+  if (p === '/rooms') { // offene Räume mit Ersteller für die Liste im Menü
+    res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': CORS_ORIGIN });
+    return res.end(JSON.stringify([...rooms.values()].filter(r => r.players.size && r.players.size < MAX_PLAYERS).map(r => ({ code: r.code, host: r.host, n: r.players.size }))));
+  }
   if (p.endsWith('/')) p += 'index.html';
   const file = path.resolve(CLIENT_DIR, '.' + p);
   if (!file.startsWith(CLIENT_DIR + path.sep)) { res.writeHead(403); return res.end(); } // Path-Traversal-Schutz
@@ -266,7 +270,7 @@ io.on('connection', (socket) => {
     data = data || {};
     let code = sanitizeRoom(data.room);
     if (!code) code = newCode();
-    room = rooms.get(code) || createRoom(code);
+    room = rooms.get(code) || Object.assign(createRoom(code), { host: sanitizeName(data.name) });
     if (room.players.size >= MAX_PLAYERS) { const full = room; room = null; if (!full.players.size) rooms.delete(code); return ack({ error: `Raum ${code} ist voll (${MAX_PLAYERS} Spieler).` }); }
     const color = /^#[0-9a-f]{6}$/i.test(data.color) ? data.color : '#ff5aa0';
     const [x, z] = randomSidewalkSpot();

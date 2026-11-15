@@ -61,6 +61,9 @@ button.round { width: 44px; height: 44px; padding: 0; border-radius: 50%; font-s
 details { border: 1px solid var(--line); border-radius: 14px; padding: 8px 12px; }
 summary { cursor: pointer; font-weight: 700; }
 .settings { display: grid; gap: 6px; }
+.roomlist { display: grid; gap: 6px; margin-top: 8px; }
+.roomlist button { display: flex; justify-content: space-between; gap: 8px; font-size: 16px; padding: 8px 12px; text-align: left; }
+.roomlist small, .roomlist p { color: var(--muted); margin: 0; font-size: 14px; }
 .gfx { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
 /* Shader-Karten: Name, Zweck, Balken für Tempo und Optik; Chromebook-Stufen mit eigenem Farbton */
 .shaders { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
