@@ -55,3 +55,50 @@ Client darf nur noch: Eingaben, Kamera, Effekte, Animation, Ton.
 - Streifenwagen-Verfolgung mit Fahr-KI, Hubschrauber abschießen
 - Einzelspieler ohne Server
 - Schaden an Autos durch Blaster (Spielzeug)
+
+---
+
+# Stand (15.11.2026)
+
+Alles unten ist auf `claude/confident-cori-jj4oph` gepusht. Kein Pull Request.
+
+## Fertig und getestet
+| Was | Test |
+|---|---|
+| Alle 42 Figuren + 3 Wachen, Laden bei Bedarf | Browser-Test: Spieler B wählt Figur 15/42, A sieht sie |
+| Blaster dunkel mit oranger Mündung | Bild geprüft |
+| Trackpad: Pfeiltasten, V, C; Tablet-Erkennung | Browser-Test: Pfeiltaste dreht Kamera, V feuert |
+| Server führt Munition, Feuerrate, Treffer, Position | `npm test` + Browser-Test (Munition Client 28 = Server 28, kein falsches Zurücksetzen) |
+| Autoschaden je Zone, Türen, Rauch, Feuer, Explosion, Wrack | `npm test` + Browser-Test (Schaden bei beiden Spielern gleich) + Bilder |
+| Fahndung 0–5 Sterne, Stadtwache, Hubschrauber, Abseilen | `npm test` + Bilder (Tag, Nacht mit Suchscheinwerfer) |
+| README, GitHub-Pages-Workflow | Workflow gepusht, noch nie gelaufen |
+
+## Nicht geprüft
+- Echte Geräte: Chromebook, Tablet, Handy. Leistung nur mit Software-Grafik gemessen.
+- Umklappen in den Tablet-Modus im laufenden Spiel (lässt sich hier nicht nachstellen).
+- Touch-Bedienung mit neuer Sternanzeige (Test lief beim Speichern noch).
+- Hubschrauber-Modell bei Tag aus der Nähe.
+- GitHub Pages: muss einmal von Hand eingeschaltet werden (Settings → Pages → Source: GitHub Actions).
+
+## Offen / Ideen
+- Blaster: nur Farbe geändert, Formen wie vorher.
+- Streifenwagen-Verfolgung, Hubschrauber abschießen: nicht gebaut.
+- Rauch wirkt bei Tag etwas dünn.
+- Wachen können in Häuserlücken hängen bleiben (dann verjähren die Sterne – wirkt wie Verstecken).
+
+## So geht es weiter
+1. Server-Adresse in `client/js/config.js` eintragen, Server bei einem Anbieter starten (README Abschnitt 2).
+2. Pages einschalten.
+3. Auf echtem Chromebook testen: Qualität „Niedrig“, Trackpad, Touch.
+
+## Wo liegt was
+| Datei | Inhalt |
+|---|---|
+| `server/server.js` | Räume, Schummelschutz, Autoschaden, Fahndung, Wachen, Hubschrauber, Passanten, Verkehr |
+| `server/test.js` | Selbsttest (`npm test`) |
+| `client/js/main.js` | Spielschleife, Netz, HUD, Wachen/Hubschrauber anzeigen |
+| `client/js/vehicles.js` | Fahrphysik, Schadensoptik, Rauch/Feuer/Explosion |
+| `client/js/character.js` | Figuren, Animation, Blaster |
+| `client/js/input.js` | Tastatur, Maus/Trackpad, Touch, Tablet-Erkennung |
+| `client/js/heli.js` | Hubschrauber-Modell |
+| `client/js/shared.js` | Stadt, Konstanten, Figurenliste (von Client und Server genutzt) |
