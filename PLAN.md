@@ -102,3 +102,67 @@ Alles unten ist auf `claude/confident-cori-jj4oph` gepusht. Kein Pull Request.
 | `client/js/input.js` | Tastatur, Maus/Trackpad, Touch, Tablet-Erkennung |
 | `client/js/heli.js` | Hubschrauber-Modell |
 | `client/js/shared.js` | Stadt, Konstanten, Figurenliste (von Client und Server genutzt) |
+
+---
+
+# Nächster Auftrag (15.11.2026, noch nicht begonnen)
+
+Wunsch: HUD wie im großen Vorbild (GTA V), Gebäude und Autos sehr realistisch, Blaster sehen aus wie echte Spielwaffen aus dem Vorbild.
+Regel: nur Aufbau und Stimmung nachbauen. Keine Original-Schrift (Pricedown), keine Logos, Icons, Modelle oder Texturen aus GTA (Urheberrecht).
+Ablauf je Phase: umsetzen → `npm test` → Bilder mit `view.cjs` (Tag + Nacht, Qualität low + medium) → Commit + Push auf `claude/confident-cori-jj4oph`.
+
+## Phase 8 – HUD im Stil des Vorbilds
+Dateien: `client/index.html` (Block `<div id="hud">`), `client/css/style.css` (Abschnitt HUD), `client/js/hud.js` (`minimap`), `client/js/main.js` (HUD-Updates: `hpbar`, `ammo`, `wname`, `kmh`, Sterne).
+- ☐ Minikarte unten links, abgerundetes Rechteck ca. 260 × 170 px statt Kreis oben links (`#minimap` + Canvas-Größe in `hud.js`: `R` → Breite/Höhe getrennt, Ausschnitt nach vorn verschoben, Spieler-Pfeil im unteren Drittel).
+- ☐ Kartenfarben dunkel/entsättigt: Straßen grau-weiß, Blöcke dunkelgrau, Wasser dunkelblau, Parks dunkelgrün (`drawCity`).
+- ☐ Unter der Karte zwei schmale Balken: links grün = Energie (`#hpbar`), rechts blau = Schutz (vorerst leer/voll als Platzhalter oder weglassen). Rot blinkend unter 25 %.
+- ☐ Oben rechts untereinander: Uhrzeit (`#clock` dorthin), Waffenbild + Munition „28 | 120“ (`#weapon`), darunter Fahndungssterne (`#stars`, weiße Umrisse, aktive Sterne weiß gefüllt, blinkend beim Abtauchen = bleibt).
+- ☐ Waffenbild: kleines Canvas-Icon (Silhouette des neuen Waffenmodells, Phase 11) statt Text; Name nur kurz beim Wechsel einblenden.
+- ☐ Waffenrad: Taste Tab halten bzw. Touch-Taste ⟳ lange drücken → Kreis mit 4 Feldern, Maus/Stick wählt (Tab ist aktuell Punkteliste → Punkteliste auf `P` verlegen, Hinweistexte im Menü anpassen).
+- ☐ Fahrzeugname unten rechts groß, kurz eingeblendet beim Einsteigen (statt `#speed`-Leiste); km/h klein darunter.
+- ☐ Meldungen (`#feed`) oben links als dunkle Box mit Text, nicht mehr rechts.
+- ☐ Großer Text bei K.o. („Durchgeweicht!“/„Erwischt!“) mittig, grau entsättigter Bildschirm (CSS `filter: grayscale` auf `#game` während K.o.).
+- ☐ Schrift: freie Google-Schrift mit ähnlicher Wirkung, z. B. „Bebas Neue“ oder „Oswald“ (OFL) für Zahlen/Titel; Lizenz im README nachtragen.
+- ☐ Touch: Layout skalieren (`body.touch`), Karte kleiner (200 × 130), nichts darf Touch-Tasten verdecken.
+- Test: `touch.cjs` + Bild PC; Prüfen, dass `e2e.cjs` IDs (`#ammo`, `#hpbar`, `#starsOn`) noch findet.
+
+## Phase 9 – Gebäude realistischer
+Datei: `client/js/buildings.js` (alles prozedural, Canvas-Texturen, 6 Sammel-Meshes – Draw-Call-Budget halten!).
+- ☐ Texturen höher auflösen auf medium/high (PX 128 → 256), low bleibt 128 (Speicher Chromebook).
+- ☐ Normal-/Rauheitskarten aus derselben Canvas ableiten (Fensterscheiben glatt + spiegelnd über `roughnessMap`, Putz rau) → Scheiben spiegeln `scene.environment`.
+- ☐ Echte Fenster-Tiefe vortäuschen: dunkler Rahmenschatten innen + Innenraum-Andeutung (Vorhänge, Decke hell, Lampen) in der Textur; nachts mehr Variation.
+- ☐ Neue Gebäudetypen in `TINT`/`CELL`: Wolkenkratzer mit Glasfassade + Metall-Lisenen, Backstein/Altbau, Parkhaus (offene Decks), Hotel am Strand mit Balkonen.
+- ☐ Höhenstaffelung: Türme mit Rücksprüngen (2–3 schmalere Quader übereinander), Dachkronen.
+- ☐ Erdgeschoss: mehr Ladenvarianten, Schaufenster mit Auslagen, Eingänge mit Vordach, Graffiti/Schmutzstreifen unten (Verwitterung via `vertexColors` dunkler am Boden).
+- ☐ Dächer: Wassertanks, Lüfter, Antennen, Kies-Textur.
+- ☐ Straßen (world.js `canvasTex`): Flicken, Ölflecken, Gullys, Bordstein-Kante als eigener Quader; Ampeln an Kreuzungen (InstancedMesh, nur Optik).
+- ☐ Licht: Standard-Stil auf „real“ setzen (Menü `#style` Default), Nebel etwas dunstiger, Sonne wärmer.
+- Budget: max. +6 Draw Calls, Dreiecke < 1,5 Mio auf medium; mit `view.cjs` `calls/tris` messen.
+
+## Phase 10 – Autos realistischer
+Dateien: `client/js/vehicles.js` (Laden/Material), `client/js/assets.js`, ggf. neue Modelle in `client/assets/models/`.
+- ☐ Zuerst Material-Upgrade an den Kenney-Modellen: Lack als `MeshPhysicalMaterial` mit `clearcoat 1`, `metalness 0.6`, `roughness 0.35`; Scheiben dunkel getönt, glatt, leicht durchsichtig; Felgen Chrom; Reifen matt schwarz; `scene.environment` immer setzen (auch Low-Poly-Stil), damit Lack spiegelt.
+- ☐ Scheinwerfer/Rücklichter als emissive Flächen (nachts an, Bremslicht hell beim Bremsen), Kennzeichen-Fläche.
+- ☐ Proportionen: `CAR_SIZE` in `shared.js` prüfen (flacher, breiter wirkt echter), Räder größer.
+- ☐ Falls Material nicht reicht: freie realistischere Modelle suchen (Lizenz CC0/CC-BY, z. B. Quaternius, Poly Pizza CC0), mit `rb/conv.mjs`-Pipeline (meshopt, WebP) umwandeln, Größe < 400 KB je Auto. Lizenz im README eintragen. Keine Marken/Logos am Auto.
+- ☐ Schadensoptik (`crumple`, `door`) muss mit neuen Materialien weiter gehen – Test „Autoschaden + Explosion“ + Bilder.
+- ☐ Schatten unter dem Auto (Blob-Schatten auf low ohne Schattenkarte).
+
+## Phase 11 – Spielzeug-Blaster im Stil echter Spielwaffen
+Datei: `client/js/character.js` (`makeBlaster`, `gunOf`, `gunmetal`), `shared.js` `WEAPONS` (Namen).
+- ☐ Kenney-Blaster durch eigene prozedurale Modelle aus Grundkörpern ersetzen (keine Fremd-Assets nötig): Pistole (Wasser), Maschinenpistole (Schaum), Schrotflinte (Konfetti), Gewehr (Farbe). Teile: Lauf (Zylinder), Gehäuse (Box mit Fase), Griff schräg, Magazin, Abzugsbügel, Kimme/Korn, Schiene.
+- ☐ Material: schwarzes Polymer + mattes Metall, kleine Glanzkanten; orange Mündung bleibt (Spielzeug-Kennzeichen, Schutz der Idee „harmlos“).
+- ☐ Mündungspunkt aus dem neuen Modell (statt Bounding-Box-Suche), Haltung beim Zielen prüfen (Figur-Hand, `AIM_FLAG`).
+- ☐ Mündungsblitz = Wassernebel/Konfettiwolke statt Feuer.
+- ☐ Waffen-Icons für HUD (Phase 8) aus denselben Modellen rendern (einmal in Offscreen-Canvas).
+- ☐ Namen anpassen, keine echten Waffenmarken.
+
+## Phase 12 – Abschluss
+- ☐ `npm test`, `e2e.cjs` low + medium, `touch.cjs`, Bilder Tag/Nacht.
+- ☐ README: neue Schrift-/Modell-Lizenzen, Steuerung (Waffenrad, Punkteliste auf P).
+- ☐ PLAN.md Stand aktualisieren, Commit, Push. Kein Pull Request.
+
+## Hinweise für die nächste Sitzung
+- Bild-Werkzeuge liegen nur im Scratchpad (geht verloren): `view.cjs` = Playwright mit Server im selben Prozess, Teleport setzt auch Serverposition (`place`). Bei Verlust neu schreiben: Server per `process.env.PORT` + `import('server/server.js')` starten, `?debug` öffnet `window.G`.
+- Testpunkt Straße: `x = roadCenter(3)`, `z = blockMin(3) + 20` (Werte aus `shared.js`).
+- Das abgelehnte Thema (Tarn-Overlay gegen Schul-Überwachung) bleibt abgelehnt und wird nicht gebaut.
