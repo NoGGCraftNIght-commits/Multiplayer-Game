@@ -121,7 +121,7 @@ function setupMenu() {
     const box = $('roomList'), msg = (t) => box.replaceChildren(Object.assign(document.createElement('p'), { textContent: t }));
     msg('Lade …');
     try {
-      const list = await (await fetch(serverUrl().replace(/\/$/, '') + '/rooms')).json();
+      const list = await useP2P() ? await (await P2P()).listRooms() : await (await fetch(serverUrl().replace(/\/$/, '') + '/rooms')).json();
       if (!list.length) return msg('Keine offenen Server. „Spielen“ ohne Raumcode erstellt einen.');
       box.replaceChildren(...list.map(r => { const b = Object.assign(document.createElement('button'), { type: 'button' }); b.append(`${r.code} · von ${r.host}`, Object.assign(document.createElement('small'), { textContent: `${r.n}/${MAX_PLAYERS}` })); b.onclick = () => { $('room').value = r.code; join(); }; return b; }));
     } catch { msg('Server nicht erreichbar.'); }
@@ -146,10 +146,14 @@ async function join() {
   audio.unlock().catch(() => {});
   my.name = sanitizeName($('name').value);
   await loadModel(AVATARS[my.avatar]);
-  const url = serverUrl(), n = new Net(url);
+  const url = serverUrl(), p2p = await useP2P(), typed = sanitizeRoom($('room').value), code = typed || (p2p ? newCode() : '');
   store.set('name', my.name);
-  try { start(n, await n.join({ room: $('room').value, ...my }), url); } catch (e) {
-    n.close(); phase = 'menu'; $('play').textContent = 'Spielen';
+  let n;
+  try {
+    n = p2p ? new Net(null, typed ? await (await P2P()).connect(code) : (await P2P()).host(code, my.name)) : new Net(url);
+    start(n, await n.join({ room: code, ...my }), url);
+  } catch (e) {
+    n?.close(); phase = 'menu'; $('play').textContent = 'Spielen';
     const noServer = /Verbindung|antwortet/.test(e.message);
     $('menuError').textContent = e.message + (noServer ? ' Der Spiel-Server ist gerade nicht erreichbar.' : '');
   }
@@ -344,6 +348,14 @@ function controls() {
 
 const cash = (m) => '$' + m.toLocaleString('de-DE');
 const serverUrl = () => params.get('server') || SERVER_URL || location.origin; // fest eingestellt, kein Eingabefeld
+// Ohne eigenen Server (z. B. GitHub Pages): direkt von Browser zu Browser (p2p.js, erst bei Bedarf geladen)
+const P2P = () => import('./p2p.js');
+const newCode = () => Array.from({ length: 5 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random() * 32)]).join('');
+let p2pMode = null;
+async function useP2P() {
+  p2pMode ??= params.has('p2p') || (!SERVER_URL && !params.get('server') && !(await fetch('health', { cache: 'no-store' }).then(r => r.text()).then(t => t === 'ok').catch(() => false)));
+  return p2pMode;
+}
 // Waffenrad: fehlende Waffen blass, mit Preis
 function renderWheel() {
   ui.wheel.replaceChildren(...WEAPONS.map((w, i) => {

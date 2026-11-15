@@ -28,6 +28,11 @@ Ohne Server läuft das Spiel nicht: Er verwaltet Räume, Passanten, Verkehr, Ene
 
 ## 2. Online stellen
 
+**Ohne eigenen Server (Standard auf GitHub Pages):** Wer „Spielen“ ohne Raumcode drückt, erstellt einen Raum; sein
+Browser rechnet dann das Spiel (`client/js/game-server.js`), die anderen verbinden sich per Raumcode direkt mit ihm
+(WebRTC, Vermittlung über den freien PeerJS-Dienst). Verlässt der Gastgeber das Spiel, endet der Raum.
+Ein eigener Server (unten) ist nur nötig, wenn Räume unabhängig vom Gastgeber laufen sollen.
+
 ### Server
 
 Am schnellsten: auf render.com **New → Blueprint** und dieses Repository wählen (Datei `render.yaml`).

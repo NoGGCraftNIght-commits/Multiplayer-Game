@@ -32,8 +32,8 @@ export class Interp {
 export const RENDER_DELAY = 110; // ms "in der Vergangenheit" rendern (2 Server-Ticks Puffer)
 
 export class Net {
-  constructor(url) {
-    this.socket = io(url || undefined, { transports: ['websocket', 'polling'], reconnection: true, timeout: 8000 });
+  constructor(url, socket) { // socket = direkte Verbindung (p2p.js) statt Socket.io
+    this.socket = socket || io(url || undefined, { transports: ['websocket', 'polling'], reconnection: true, timeout: 8000 });
     this.offset = null; // Serverzeit - lokale Zeit
   }
   serverNow() { return performance.now() + (this.offset ?? 0); }
