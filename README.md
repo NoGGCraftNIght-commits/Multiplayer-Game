@@ -62,12 +62,13 @@ danach das zuletzt benutzte Gerät (Finger auf dem Bildschirm → Touch-Tasten, 
 | Springen / Handbremse | Leertaste | ⤒ |
 | Spritzen | Linksklick, V oder Enter | 💦 (gedrückt halten, dabei wischen) |
 | Zielen | Rechtsklick halten oder C (an/aus) | ◎ |
-| Blaster wechseln | 1–4, Q, Mausrad | ⟳ |
+| Blaster wechseln | 1–4, Q, Mausrad | ⟳ antippen |
+| Waffenrad | Tab halten, mit Maus zeigen, loslassen | ⟳ lange drücken, Finger ziehen |
 | Nachladen | R | automatisch |
 | Ein-/Aussteigen | F | 🚗 |
 | Hupe · Auto aufrichten | H · T | 📯 |
 | Passanten grüßen · Daumen runter | E · N | 👋 |
-| Punkteliste | Tab | ≡ |
+| Punkteliste | L halten | ≡ |
 | Pause | Esc oder P | II |
 
 Trackpad-Tipp: Mit Pfeiltasten umschauen und mit V spritzen, dann muss man nicht gleichzeitig wischen und klicken.
@@ -128,10 +129,9 @@ Autoschaden, Explosion, Fahndung, Verkehr.
 |---|---|---|
 | Figuren (42 Erwachsene, 3 Wachen) und Bewegungsaufnahmen | [Microsoft Rocketbox](https://github.com/microsoft/Microsoft-Rocketbox), Stand `0943055`, umgewandelt in GLB | MIT (`client/assets/LICENSE-Rocketbox-MIT.txt`) |
 | Autos | Kenney, [Car Kit](https://kenney.nl/assets/car-kit) | CC0 1.0 |
-| Blaster | Kenney, [Blaster Kit 2.1](https://kenney.nl/assets/blaster-kit), im Spiel dunkel eingefärbt | CC0 1.0 |
 | Bäume, Büsche, Steine, Kisten | Kenney ([Nature Kit](https://kenney.nl/assets/nature-kit)) und [Quaternius](https://quaternius.com) | CC0 1.0 |
 | Geräusche | Kenney: Impact Sounds, Interface Sounds, RPG Audio, Sci-fi Sounds, Digital Audio | CC0 1.0 |
-| Schrift „Baloo 2“ | Google Fonts | SIL Open Font License 1.1 |
+| Schriften „Baloo 2“ und „Oswald“ | Google Fonts | SIL Open Font License 1.1 |
 | three.js, cannon-es, Socket.IO | über CDN bzw. npm | MIT |
 
 Die Kenney- und Quaternius-Dateien stammen als verkleinerte Kopien aus dem npm-Paket

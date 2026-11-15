@@ -23,10 +23,10 @@ export const COPS = ['cop_m1', 'cop_f1', 'cop_m2']; // Stadtwache
 
 // Spielzeug-Blaster: Schaden = "Spritzpunkte" auf 100 Energie
 export const WEAPONS = [
-  { id: 'splash', name: 'Wasserspritze', model: 'blaster_c', damage: 9, rate: 9, range: 38, spread: 0.012, pellets: 1, speed: 45, fx: 'water', mag: 40, reload: 1.4 },
-  { id: 'dart', name: 'Schaumpfeil-Blaster', model: 'blaster_a', damage: 26, rate: 2.6, range: 80, spread: 0.002, pellets: 1, speed: 90, fx: 'dart', mag: 8, reload: 1.8 },
-  { id: 'confetti', name: 'Konfetti-Kanone', model: 'blaster_g', damage: 8, rate: 1.1, range: 22, spread: 0.07, pellets: 8, speed: 55, fx: 'confetti', mag: 5, reload: 2.2 },
-  { id: 'paint', name: 'Farbklecks-Werfer', model: 'blaster_o', damage: 40, rate: 0.9, range: 60, spread: 0.004, pellets: 1, speed: 38, fx: 'paint', mag: 4, reload: 2.4, gravity: 9 },
+  { id: 'splash', name: 'Wasserpistole', damage: 9, rate: 9, range: 38, spread: 0.012, pellets: 1, speed: 45, fx: 'water', mag: 40, reload: 1.4 },
+  { id: 'dart', name: 'Schaum-MP', damage: 26, rate: 2.6, range: 80, spread: 0.002, pellets: 1, speed: 90, fx: 'dart', mag: 8, reload: 1.8 },
+  { id: 'confetti', name: 'Konfetti-Flinte', damage: 8, rate: 1.1, range: 22, spread: 0.07, pellets: 8, speed: 55, fx: 'confetti', mag: 5, reload: 2.2 },
+  { id: 'paint', name: 'Farbgewehr', damage: 40, rate: 0.9, range: 60, spread: 0.004, pellets: 1, speed: 38, fx: 'paint', mag: 4, reload: 2.4, gravity: 9 },
 ];
 export const CAR_HIT_DAMAGE = 35;
 

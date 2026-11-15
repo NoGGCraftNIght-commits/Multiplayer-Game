@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { assets } from './assets.js';
 import { AVATARS, ANIMS, WEAPONS } from './shared.js';
 
@@ -33,52 +35,67 @@ function point(bone, axis, dir, w) {
   bone.quaternion.slerp(_q2.setFromUnitVectors(_v2, _v).multiply(bone.quaternion), w);
 }
 
-// Bunte Flächen der Blaster-Textur werden zu schwarzem Kunststoff, graue zu dunklem Stahl
-function gunmetal(map) {
-  const c = document.createElement('canvas'); c.width = map.image.width; c.height = map.image.height;
-  const g = c.getContext('2d'); g.drawImage(map.image, 0, 0);
-  const d = g.getImageData(0, 0, c.width, c.height), p = d.data;
-  for (let i = 0; i < p.length; i += 4) {
-    const mx = Math.max(p[i], p[i + 1], p[i + 2]), mn = Math.min(p[i], p[i + 1], p[i + 2]);
-    const v = mx && (mx - mn) / mx > 0.25 ? 26 + mx * 0.09 : mx * 0.5;
-    p[i] = v; p[i + 1] = v * 1.03; p[i + 2] = v * 1.1;
-  }
-  g.putImageData(d, 0, 0);
-  const t = new THREE.CanvasTexture(c);
-  return Object.assign(t, { flipY: map.flipY, colorSpace: map.colorSpace, magFilter: map.magFilter, minFilter: map.minFilter, generateMipmaps: map.generateMipmaps });
-}
+// Blaster aus Grundkörpern, Maße in Metern. Griff liegt im Ursprung, Mündung zeigt nach +z.
+// Teil: [Form b=Kasten/c=Zylinder, Material 0=Polymer/1=Metall/2=orange Spitze, Breite, Höhe, Länge, x, y, z, Neigung um x]
+const GUNS = [
+  { muzzle: [0, 0.062, 0.168], parts: [ // Wasserpistole
+    ['b', 1, 0.03, 0.032, 0.19, 0, 0.062, 0.045], ['b', 0, 0.028, 0.02, 0.15, 0, 0.036, 0.035], ['b', 0, 0.03, 0.105, 0.042, 0, -0.012, -0.022, 0.26],
+    ['b', 0, 0.034, 0.012, 0.046, 0, -0.064, -0.037, 0.26], ['b', 0, 0.01, 0.006, 0.05, 0, 0.004, 0.04], ['b', 0, 0.01, 0.03, 0.007, 0, 0.017, 0.064],
+    ['b', 1, 0.006, 0.02, 0.006, 0, 0.018, 0.033, -0.3], ['c', 1, 0.012, 0.012, 0.02, 0, 0.062, 0.145], ['b', 1, 0.022, 0.008, 0.01, 0, 0.081, -0.04],
+    ['b', 1, 0.005, 0.007, 0.007, 0, 0.081, 0.128], ['c', 2, 0.017, 0.017, 0.012, 0, 0.062, 0.161]] },
+  { muzzle: [0, 0.065, 0.325], parts: [ // Schaum-MP
+    ['b', 1, 0.045, 0.06, 0.26, 0, 0.06, 0.05], ['b', 1, 0.022, 0.01, 0.2, 0, 0.095, 0.05], ['c', 1, 0.03, 0.03, 0.12, 0, 0.065, 0.24],
+    ['b', 0, 0.032, 0.1, 0.04, 0, -0.01, -0.02, 0.26], ['b', 0, 0.01, 0.006, 0.06, 0, 0, 0.04], ['b', 0, 0.01, 0.03, 0.007, 0, 0.015, 0.07],
+    ['b', 1, 0.028, 0.16, 0.035, 0, -0.035, 0.12, -0.08], ['b', 1, 0.008, 0.008, 0.2, 0.016, 0.07, -0.17], ['b', 1, 0.008, 0.008, 0.2, -0.016, 0.07, -0.17],
+    ['b', 0, 0.04, 0.07, 0.014, 0, 0.055, -0.275], ['b', 1, 0.006, 0.02, 0.006, 0, 0.105, 0.16], ['c', 2, 0.034, 0.034, 0.02, 0, 0.065, 0.31]] },
+  { muzzle: [0, 0.075, 0.66], parts: [ // Konfetti-Flinte
+    ['b', 1, 0.045, 0.07, 0.2, 0, 0.055, 0.04], ['c', 1, 0.028, 0.028, 0.5, 0, 0.077, 0.39], ['c', 1, 0.024, 0.024, 0.4, 0, 0.045, 0.34],
+    ['c', 0, 0.044, 0.044, 0.16, 0, 0.047, 0.3], ['b', 0, 0.032, 0.095, 0.04, 0, -0.01, -0.03, 0.3], ['b', 0, 0.04, 0.075, 0.3, 0, 0.022, -0.22, -0.12],
+    ['b', 0, 0.045, 0.11, 0.022, 0, -0.002, -0.37, -0.12], ['b', 0, 0.01, 0.006, 0.06, 0, 0.002, 0.03], ['c', 1, 0.007, 0.007, 0.007, 0, 0.094, 0.62],
+    ['c', 2, 0.034, 0.034, 0.02, 0, 0.077, 0.645]] },
+  { muzzle: [0, 0.085, 0.615], parts: [ // Farbgewehr
+    ['b', 1, 0.04, 0.05, 0.2, 0, 0.04, 0.04], ['b', 1, 0.042, 0.045, 0.24, 0, 0.085, 0.05], ['b', 1, 0.024, 0.012, 0.24, 0, 0.114, 0.08],
+    ['b', 0, 0.05, 0.055, 0.26, 0, 0.08, 0.3], ['c', 1, 0.018, 0.018, 0.16, 0, 0.085, 0.5], ['b', 1, 0.028, 0.15, 0.055, 0, -0.03, 0.11, -0.25],
+    ['b', 0, 0.032, 0.1, 0.04, 0, -0.01, -0.02, 0.3], ['b', 0, 0.04, 0.07, 0.25, 0, 0.065, -0.2], ['b', 0, 0.042, 0.11, 0.03, 0, 0.05, -0.33],
+    ['c', 1, 0.035, 0.035, 0.1, 0, 0.145, 0.06], ['b', 1, 0.02, 0.02, 0.07, 0, 0.126, 0.06], ['b', 1, 0.008, 0.04, 0.01, 0, 0.12, 0.42],
+    ['b', 0, 0.01, 0.006, 0.06, 0, 0, 0.05], ['c', 2, 0.03, 0.03, 0.03, 0, 0.085, 0.595]] },
+];
+const GUN_MATS = [
+  new THREE.MeshStandardMaterial({ color: 0x1b1d20, roughness: 0.72 }),
+  new THREE.MeshStandardMaterial({ color: 0x34373c, metalness: 0.85, roughness: 0.36 }),
+  new THREE.MeshStandardMaterial({ color: 0xff6a00, roughness: 0.5 }),
+];
 
-// Maße, dunkles Material und Mündung (vorderste Punkte des Modells, Mündung liegt bei -z) einmal je Blaster
+// Teile je Material zu einer Geometrie verschmelzen (3 Draw Calls je Blaster)
 function gunOf(wi) {
   if (guns[wi]) return guns[wi];
-  const src = assets.models[WEAPONS[wi].model].scene; src.updateMatrixWorld(true);
-  const bb = new THREE.Box3().setFromObject(src), len = bb.max.z - bb.min.z, front = [];
-  let map = null, x = 0, y = 0, r = 0;
-  src.traverse(o => {
-    if (!o.isMesh) return;
-    map ||= o.material.map;
-    const p = o.geometry.attributes.position;
-    for (let i = 0; i < p.count; i++) if (_v.fromBufferAttribute(p, i).applyMatrix4(o.matrixWorld).z < bb.min.z + len * 0.012) front.push(_v.x, _v.y);
-  });
-  for (let i = 0; i < front.length; i += 2) { x += front[i] * 2 / front.length; y += front[i + 1] * 2 / front.length; }
-  for (let i = 0; i < front.length; i += 2) r = Math.max(r, Math.hypot(front[i] - x, front[i + 1] - y));
-  return guns[wi] = { src, bb, len, x, y, r, mat: new THREE.MeshStandardMaterial({ map: map && gunmetal(map), color: map ? 0xffffff : 0x25272c, metalness: 0.55, roughness: 0.42 }) };
+  const by = [[], [], []];
+  for (const [k, m, w, h, l, x, y, z, rx = 0] of GUNS[wi].parts) {
+    const g = k === 'b' ? new RoundedBoxGeometry(w, h, l, 2, Math.min(w, h, l) * 0.18) : new THREE.CylinderGeometry(w / 2, w / 2, l, 14).rotateX(Math.PI / 2);
+    by[m].push(g.rotateX(rx).translate(x, y, z).toNonIndexed());
+  }
+  return guns[wi] = by.map(list => mergeGeometries(list));
 }
-const TIP = new THREE.MeshStandardMaterial({ color: 0xff6a00, roughness: 0.5 });
 
-// Spielzeug-Blaster: Form vom Originalmodell, Farben wie echtes Gerät; nur die orange Mündung verrät das Spielzeug.
-// Griff liegt im Ursprung, Mündung zeigt nach +z.
 function makeBlaster(wi) {
-  const { src, bb, len, x, y, r, mat } = gunOf(wi);
-  const gy = bb.min.y + (bb.max.y - bb.min.y) * 0.25, gz = bb.max.z - len * 0.25;
-  const inner = src.clone(true); inner.rotation.y = Math.PI; inner.position.set(0, -gy, gz);
-  inner.traverse(o => { if (o.isMesh) { o.material = mat; o.castShadow = true; } });
-  const g = new THREE.Group(); g.add(inner);
-  g.userData.muzzle = new THREE.Vector3(-x, y - gy, gz - bb.min.z);
-  const tip = new THREE.Mesh(new THREE.CylinderGeometry(r * 1.12, r * 1.12, len * 0.05, 12), TIP);
-  tip.rotation.x = Math.PI / 2; tip.position.copy(g.userData.muzzle).z -= len * 0.02; g.add(tip);
-  g.scale.setScalar(100 * THREE.MathUtils.clamp(len * 0.42, 0.34, 0.6) / len); // Handknochen rechnet in cm
+  const g = new THREE.Group();
+  gunOf(wi).forEach((geo, m) => { const o = new THREE.Mesh(geo, GUN_MATS[m]); o.castShadow = true; g.add(o); });
+  g.userData.muzzle = new THREE.Vector3().fromArray(GUNS[wi].muzzle);
+  g.scale.setScalar(100); // Handknochen rechnet in cm
   return g;
+}
+
+// Seitenansicht als weiße Silhouette fürs HUD (dieselben Teile wie das Modell)
+export function gunIcon(wi, c) {
+  const P = GUNS[wi].parts, z0 = Math.min(...P.map(p => p[7] - p[4] / 2)), z1 = Math.max(...P.map(p => p[7] + p[4] / 2));
+  const y0 = Math.min(...P.map(p => p[6] - p[3] / 2)), y1 = Math.max(...P.map(p => p[6] + p[3] / 2));
+  const g = c.getContext('2d'), k = 0.9 * Math.min(c.width / (z1 - z0), c.height / (y1 - y0));
+  g.clearRect(0, 0, c.width, c.height); g.fillStyle = '#fff';
+  for (const [, , , h, l, , y, z, rx = 0] of P) {
+    g.setTransform(1, 0, 0, 1, c.width / 2 + (z - (z0 + z1) / 2) * k, c.height / 2 - (y - (y0 + y1) / 2) * k);
+    g.rotate(rx); g.fillRect(-l * k / 2, -h * k / 2, l * k, h * k);
+  }
+  g.setTransform(1, 0, 0, 1, 0, 0);
 }
 
 export class Character {

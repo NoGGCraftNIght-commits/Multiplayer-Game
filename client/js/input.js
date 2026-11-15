@@ -45,7 +45,8 @@ export class Input {
   get fire() { return this.fireHeld || this.keys.has('KeyV') || this.keys.has('Enter'); }
   get aim() { return this.aimHeld || this.aimToggle; }
   get handbrake() { return this.keys.has('Space') || this.touchJumpHeld; }
-  get scoreboard() { return this.keys.has('Tab') || this.touchScore; }
+  get scoreboard() { return this.keys.has('KeyL') || this.touchScore; }
+  get wheel() { return this.keys.has('Tab') || this.touchWheel; }
 
   bindDesktop() {
     const map = { KeyF: 'enter', KeyY: 'enter', KeyE: 'interact', Space: 'jump', KeyQ: 'weaponNext', KeyH: 'horn', KeyG: 'emoteYes', KeyN: 'emoteNo', KeyR: 'reload',
@@ -112,7 +113,13 @@ export class Input {
     dragLook($('lookzone'));
     dragLook($('tFire'), () => { this.fireHeld = true; $('tFire').classList.add('on'); }, () => { this.fireHeld = false; $('tFire').classList.remove('on'); });
     const tap = (id, edge) => $(id).addEventListener('pointerdown', (e) => { e.preventDefault(); this.edges.add(edge); });
-    tap('tEnter', 'enter'); tap('tWeapon', 'weaponNext'); tap('tAct', 'interact'); tap('tHorn', 'horn'); tap('pauseBtn', 'pause');
+    // ⟳ tippen = nächste Waffe, lange drücken = Waffenrad, Finger ziehen wählt
+    const tw = $('tWeapon'); let twT = 0, twLast = null;
+    tw.addEventListener('pointerdown', (e) => { e.preventDefault(); tw.setPointerCapture(e.pointerId); twLast = [e.clientX, e.clientY]; twT = setTimeout(() => { this.touchWheel = true; }, 300); });
+    tw.addEventListener('pointermove', (e) => { if (!this.touchWheel) return; this.look.x += (e.clientX - twLast[0]) * 0.006; this.look.y += (e.clientY - twLast[1]) * 0.006; twLast = [e.clientX, e.clientY]; });
+    const twUp = () => { clearTimeout(twT); if (!this.touchWheel && twLast) this.edges.add('weaponNext'); this.touchWheel = false; twLast = null; };
+    tw.addEventListener('pointerup', twUp); tw.addEventListener('pointercancel', twUp);
+    tap('tEnter', 'enter'); tap('tAct', 'interact'); tap('tHorn', 'horn'); tap('pauseBtn', 'pause');
     const j = $('tJump');
     j.addEventListener('pointerdown', (e) => { e.preventDefault(); this.edges.add('jump'); this.touchJumpHeld = true; });
     const ju = () => { this.touchJumpHeld = false; }; j.addEventListener('pointerup', ju); j.addEventListener('pointercancel', ju);

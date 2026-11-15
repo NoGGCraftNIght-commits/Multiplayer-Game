@@ -3,7 +3,7 @@ import { SERVER_URL } from './config.js';
 import { loadAll, loadModel, assets } from './assets.js';
 import { World, SLAB, QUALITY } from './world.js';
 import { Vehicles } from './vehicles.js';
-import { Character } from './character.js';
+import { Character, gunIcon } from './character.js';
 import { Combat } from './combat.js';
 import { Audio } from './audio.js';
 import { Input } from './input.js';
@@ -40,11 +40,12 @@ const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _h = new THREE.Vector3
 const head = (o) => _h.set(o.pos.x, o.pos.y + (o.veh ? 2.5 : 2.05), o.pos.z);
 
 const canvas = $('game'), ui = {};
-for (const id of ['hpbar', 'wname', 'ammo', 'weapon', 'speed', 'kmh', 'vname', 'crosshair', 'hitmarker', 'hint', 'ko', 'kotext', 'vignette', 'scoreboard', 'clock', 'playerCount', 'tAct', 'tHorn', 'tFire', 'tAim', 'tWeapon']) ui[id] = $(id);
+for (const id of ['hpbar', 'carbar', 'wicon', 'wheel', 'wname', 'ammo', 'weapon', 'speed', 'kmh', 'vname', 'crosshair', 'hitmarker', 'hint', 'ko', 'kotext', 'vignette', 'scoreboard', 'clock', 'playerCount', 'tAct', 'tHorn', 'tFire', 'tAim', 'tWeapon']) ui[id] = $(id);
 const my = { name: '', avatar: 0, color: COLORS[0][0] };
 const players = new Map(), joining = new Set(), peds = [], pedBuf = new Interp();
 // Stadtwache: 8 feste Plätze; ohne Wachen/Hubschrauber schickt der Server nichts -> Leerstand einsetzen
 const cops = [], copBuf = new Interp(), heliBuf = new Interp(), NOCOPS = Array.from({ length: 48 }, (_, i) => i % 6 === 4 ? -1 : 0), NOHELI = [0, -999, 0, 0, 0];
+const wheel = { v: { x: 0, y: 0 }, pick: 0 }, blip = (el, s, ms = 1600) => { txt(el, s); el.classList.add('on'); clearTimeout(el.blip); el.blip = setTimeout(() => el.classList.remove('on'), ms); };
 const cam = { yaw: 0, pitch: -0.12, dist: 3.9, side: 0.42, up: 1.6, fov: 65, free: 0, d: 3.9 };
 let city, world, vehicles, combat, audio, input, hud, preview, net, me, heli, link = '';
 // ?debug: Spielzustand für automatische Tests offenlegen (G.tod = feste Tageszeit)
@@ -150,7 +151,8 @@ function start(n, r, url) {
   const [x, z] = r.spawn;
   me = { id: r.id, ...my, hp: 100, alive: true, score: 0, kos: 0, stars: 0, pos: new THREE.Vector3(x, world.groundY(x, z), z), yaw: 0, speed: 0, vy: 0, air: false,
     veh: null, busy: false, aim: false, pitch: 0, fireT: 0, emote: 'wave', emoteT: 0, stepD: 0, anim: 'idle', nearCar: null, nearPed: -1, char: new Character(my.avatar, my.color) };
-  me.char.setWeapon(0); world.scene.add(me.char.root);
+  me.char.setWeapon(0); world.scene.add(me.char.root); gunIcon(0, ui.wicon);
+  ui.wheel.replaceChildren(...WEAPONS.map((w, i) => { const d = document.createElement('div'), c = Object.assign(document.createElement('canvas'), { width: 108, height: 36 }); gunIcon(i, c); d.append(c, w.name); return d; }));
   for (const p of r.players) if (p.id !== me.id) addPlayer(p);
   for (const v of r.vehicles) vehicles.add(v);
   for (const d of r.damage) vehicles.setDamage(d, true);
@@ -236,7 +238,7 @@ function bindNet() {
     const bn = b?.name ?? 'Jemand';
     hud.feed(w === -2 ? `${bn} ist mit einem Auto in die Luft geflogen` : w === -3 ? `${bn} wurde von der Stadtwache erwischt` : `${a?.name ?? 'Jemand'} hat ${bn} ${VERB[w] ?? 'umgeschubst'}`);
     if (b === me) {
-      me.alive = false; koUntil = performance.now() + 4000; ui.ko.classList.remove('hidden'); audio.play('kill');
+      me.alive = false; koUntil = performance.now() + 4000; ui.ko.classList.remove('hidden'); document.body.classList.add('ko'); audio.play('kill');
       koBy = w === -2 ? 'durch eine Explosion' : w === -3 ? 'von der Stadtwache' : `von ${a?.name ?? 'jemandem'}`;
       txt(ui.ko.firstChild, w === -3 ? 'Erwischt!' : w === -2 ? 'Bumm!' : 'Durchgeweicht!');
     }
@@ -246,7 +248,7 @@ function bindNet() {
     const o = who(id); if (!o) return;
     o.hp = 100; o.alive = true;
     if (o !== me) return o.buf.clear();
-    me.pos.set(x, world.groundY(x, z), z); me.air = false; ui.ko.classList.add('hidden');
+    me.pos.set(x, world.groundY(x, z), z); me.air = false; ui.ko.classList.add('hidden'); document.body.classList.remove('ko');
     combat.ammo = WEAPONS.map(w => w.mag); combat.reloadT = 0;
   });
   net.on('shoot', (s) => { // Schütze: Mitspieler oder Wache (negative Nummer)
@@ -299,12 +301,29 @@ function controls() {
   for (let i = 0; i < WEAPONS.length; i++) if (input.pressed('w' + i)) w = i;
   if (input.pressed('weaponNext')) w++;
   if (input.pressed('weaponPrev')) w--;
-  if (w !== combat.weapon) { combat.switchTo(w); me.char.setWeapon(combat.weapon); audio.play('ui', { vol: 0.4 }); }
+  if (w !== combat.weapon) pickWeapon(w);
   if (input.pressed('reload')) combat.reload();
   if (input.pressed('jump') && !me.air) { me.vy = 5.4; me.air = true; }
   if (input.pressed('interact')) { if (me.nearPed >= 0) { net.emit('greet', me.nearPed); emote(0, false); } else emote(0, true); }
   if (input.pressed('emoteYes')) emote(0, true);
   if (input.pressed('emoteNo')) emote(1, true);
+}
+
+function pickWeapon(w) {
+  combat.switchTo(w); me.char.setWeapon(combat.weapon); audio.play('ui', { vol: 0.4 });
+  gunIcon(combat.weapon, ui.wicon); blip(ui.wname, combat.w.name);
+}
+
+// Waffenrad: Tab halten (Touch: ⟳ lange drücken), Maus/Finger zeigt auf ein Feld, Loslassen wählt
+function weaponWheel(look, open) {
+  const was = !ui.wheel.classList.contains('hidden');
+  if (open) {
+    if (!was) { wheel.pick = combat.weapon; wheel.v.x = wheel.v.y = 0; }
+    wheel.v.x = clamp(wheel.v.x + look.x, -0.3, 0.3); wheel.v.y = clamp(wheel.v.y + look.y, -0.3, 0.3);
+    if (Math.hypot(wheel.v.x, wheel.v.y) > 0.06) wheel.pick = (Math.round(Math.atan2(wheel.v.x, -wheel.v.y) / (Math.PI / 2)) + 4) % 4; // oben, rechts, unten, links
+    [...ui.wheel.children].forEach((d, i) => d.classList.toggle('on', i === wheel.pick));
+  } else if (was && wheel.pick !== combat.weapon) pickWeapon(wheel.pick);
+  ui.wheel.classList.toggle('hidden', !open);
 }
 
 function emote(e, tell) {
@@ -379,7 +398,7 @@ function enterCar() {
     me.busy = false; if (!ok || me.veh) return;
     me.veh = v; v.driver = me.id; vehicles.startDriving(v);
     me.char.root.visible = false; me.char.aimAt(null); me.aim = false; cam.free = 0;
-    audio.play('confirm', { vol: 0.5 });
+    audio.play('confirm', { vol: 0.5 }); blip(ui.vname, v.cfg.name, 3000);
   });
 }
 
@@ -530,10 +549,11 @@ function send(dt) {
 // ---------- HUD ----------
 function drawHud(dt, now) {
   const v = me.veh, touch = input.mode === 'touch';
-  ui.hpbar.style.width = me.hp + '%';
-  txt(ui.wname, combat.w.name); txt(ui.ammo, combat.reloadT > 0 ? 'lädt …' : `${combat.ammo[combat.weapon]} / ${combat.w.mag}`);
+  ui.hpbar.style.width = me.hp + '%'; ui.hpbar.classList.toggle('low', me.hp < 25);
+  ui.carbar.style.width = (v && !v.st ? v.hp : 0) + '%'; // blau = Zustand des Autos
+  txt(ui.ammo, combat.reloadT > 0 ? 'lädt …' : `${combat.ammo[combat.weapon]} | ${combat.w.mag}`);
   ui.weapon.classList.toggle('hidden', !!v); ui.speed.classList.toggle('hidden', !v);
-  if (v) { txt(ui.kmh, Math.round(Math.abs(v.speed) * 3.6)); txt(ui.vname, `${v.cfg.name} · ${v.st ? 'brennt!' : v.hp + ' %'}`); }
+  if (v) txt(ui.kmh, Math.round(Math.abs(v.speed) * 3.6));
   ui.crosshair.style.opacity = v || !me.alive ? 0 : ''; ui.crosshair.classList.toggle('aim', me.aim);
   const key = (k, s) => touch ? s : `${k} – ${s}`;
   const hint = !me.alive || paused ? '' : !touch && document.pointerLockElement !== canvas ? 'Ins Spiel klicken, um die Maus zu fangen'
@@ -557,8 +577,9 @@ function drawHud(dt, now) {
 
 // ---------- Schleife ----------
 function play(dt, now) {
-  const t = net.serverNow() - RENDER_DELAY, ctl = !paused && me.alive, look = input.consumeLook(dt);
-  if (!paused) { cam.yaw -= look.x; cam.pitch = clamp(cam.pitch - look.y, -1.1, 1.2); }
+  const t = net.serverNow() - RENDER_DELAY, ctl = !paused && me.alive, look = input.consumeLook(dt), open = ctl && !me.veh && input.wheel;
+  weaponWheel(look, open);
+  if (!paused && !open) { cam.yaw -= look.x; cam.pitch = clamp(cam.pitch - look.y, -1.1, 1.2); }
   if (input.pressed('pause') && now - lockLost > 300) setPause(!paused); // Esc löst sonst Pause + sofort wieder Weiter aus
   if (ctl) controls();
   input.edges.clear();

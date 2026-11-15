@@ -51,6 +51,7 @@ export class Combat {
       const v = d.clone().addScaledVector(side, (r() - 0.5) * 2 * w.spread).addScaledVector(up, (r() - 0.5) * 2 * w.spread).normalize().multiplyScalar(w.speed * (0.92 + r() * 0.16));
       const col = w.fx === 'confetti' ? new THREE.Color().setHSL(r(), 0.95, 0.58) : w.fx === 'water' ? new THREE.Color(0x8fe3ff) : w.fx === 'dart' ? new THREE.Color(0xff8a1f) : new THREE.Color(color);
       if (this.shots.length < MAXP) this.shots.push({ w, wi: shot.w, mine, col, p: new THREE.Vector3().fromArray(shot.o), v, left: w.range, hitIds: null });
+      if (!i) this.burst(_v.fromArray(shot.o), w.fx === 'water' ? _c.set(0xd8f4ff) : col, w.fx === 'confetti' ? 6 : 3, 1.1, 0.22); // Mündungsnebel statt Feuer
     }
     this.audio.play('shoot', { pos: mine ? null : { x: shot.o[0], z: shot.o[2] }, vol: mine ? 0.5 : 0.8, rate: SOUND[w.fx] });
   }

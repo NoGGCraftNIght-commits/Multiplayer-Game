@@ -2,9 +2,9 @@ import * as THREE from 'three';
 import { HALF, SIZE, BEACH, BLOCK, WALK } from './shared.js';
 
 // HUD-Teile, die nur DOM/Canvas anfassen: Minikarte, Namensschilder, Sprechblasen, Meldungen, Punkteliste.
-const $ = (id) => document.getElementById(id);
+const $ = (id) => document.getElementById(id), { clamp } = THREE.MathUtils;
 const _v = new THREE.Vector3();
-const PAD = 100, ZOOM = 1.15, R = 90; // Karte: 1 px = 1 m; PAD = Rand ums Stadtgebiet; R = halbe Kartenbreite
+const PAD = 140, ZOOM = 1.15; // Karte: 1 px = 1 m; PAD = Rand ums Stadtgebiet
 
 export class Hud {
   constructor(city) {
@@ -17,35 +17,35 @@ export class Hud {
   drawCity(city) {
     const c = document.createElement('canvas'); c.width = SIZE + BEACH + PAD * 2; c.height = SIZE + PAD * 2;
     const g = c.getContext('2d');
-    g.fillStyle = '#6fae62'; g.fillRect(0, 0, c.width, c.height);
+    g.fillStyle = '#2b3530'; g.fillRect(0, 0, c.width, c.height);
     g.translate(PAD + HALF, PAD + HALF); // ab hier Weltkoordinaten
-    g.fillStyle = '#1fa9bd'; g.fillRect(HALF + BEACH, -HALF - PAD, PAD, c.height);
-    g.fillStyle = '#ecd9a8'; g.fillRect(HALF, -HALF - PAD, BEACH, c.height);
-    g.fillStyle = '#454a57'; g.fillRect(-HALF, -HALF, SIZE, SIZE);
+    g.fillStyle = '#1d3550'; g.fillRect(HALF + BEACH, -HALF - PAD, PAD, c.height);
+    g.fillStyle = '#5c5a4c'; g.fillRect(HALF, -HALF - PAD, BEACH, c.height);
+    g.fillStyle = '#8a8f94'; g.fillRect(-HALF, -HALF, SIZE, SIZE);
     for (const b of city.blocks) {
-      g.fillStyle = '#b9b4aa'; g.fillRect(b.x0, b.z0, BLOCK, BLOCK);
-      g.fillStyle = b.type === 'park' ? '#5fb45a' : '#928d85'; g.fillRect(b.x0 + WALK, b.z0 + WALK, BLOCK - 2 * WALK, BLOCK - 2 * WALK);
+      g.fillStyle = '#4b5056'; g.fillRect(b.x0, b.z0, BLOCK, BLOCK);
+      g.fillStyle = b.type === 'park' ? '#33503a' : '#3b3f45'; g.fillRect(b.x0 + WALK, b.z0 + WALK, BLOCK - 2 * WALK, BLOCK - 2 * WALK);
     }
-    g.fillStyle = '#ded3ea';
+    g.fillStyle = '#2e3136';
     city.solids.slice(0, city.buildings.length).forEach(s => g.fillRect(s.x0, s.z0, s.x1 - s.x0, s.z1 - s.z0));
     return c;
   }
 
   // pos/yaw = ich; camYaw = Blickrichtung (zeigt auf der Karte nach oben); others = [{pos, color}]; cars = Fahrzeugliste
   minimap(pos, yaw, camYaw, others, cars) {
-    const g = this.g, a = camYaw - Math.PI, ca = Math.cos(a), sa = Math.sin(a);
-    g.setTransform(1, 0, 0, 1, 0, 0); g.fillStyle = '#6fae62'; g.fillRect(0, 0, 2 * R, 2 * R);
-    g.translate(R, R); g.rotate(a); g.scale(ZOOM, ZOOM); g.translate(-pos.x, -pos.z);
+    const g = this.g, W = g.canvas.width, H = g.canvas.height, cx = W / 2, cy = H * 0.66; // Spieler im unteren Drittel: mehr Sicht nach vorn
+    const a = camYaw - Math.PI, ca = Math.cos(a), sa = Math.sin(a);
+    g.setTransform(1, 0, 0, 1, 0, 0); g.fillStyle = '#2b3530'; g.fillRect(0, 0, W, H);
+    g.translate(cx, cy); g.rotate(a); g.scale(ZOOM, ZOOM); g.translate(-pos.x, -pos.z);
     g.drawImage(this.bg, -HALF - PAD, -HALF - PAD);
-    for (const v of cars) if (v) { g.fillStyle = v.driver ? '#ffffff' : '#1d2029'; g.fillRect(v.pos.x - 1.6, v.pos.z - 1.6, 3.2, 3.2); }
-    g.setTransform(1, 0, 0, 1, R, R);
+    for (const v of cars) if (v?.driver) { g.fillStyle = '#d8dade'; g.fillRect(v.pos.x - 1.6, v.pos.z - 1.6, 3.2, 3.2); }
+    g.setTransform(1, 0, 0, 1, cx, cy);
     for (const o of others) { // Mitspieler außerhalb der Karte am Rand festhalten, damit man sich findet
-      let x = ((o.pos.x - pos.x) * ca - (o.pos.z - pos.z) * sa) * ZOOM, y = ((o.pos.x - pos.x) * sa + (o.pos.z - pos.z) * ca) * ZOOM;
-      const d = Math.hypot(x, y); if (d > R - 8) { x *= (R - 8) / d; y *= (R - 8) / d; }
-      g.beginPath(); g.arc(x, y, 5, 0, 7); g.fillStyle = o.color; g.fill(); g.lineWidth = 1.5; g.strokeStyle = '#fff'; g.stroke();
+      const x = clamp(((o.pos.x - pos.x) * ca - (o.pos.z - pos.z) * sa) * ZOOM, 7 - cx, W - cx - 7), y = clamp(((o.pos.x - pos.x) * sa + (o.pos.z - pos.z) * ca) * ZOOM, 7 - cy, H - cy - 7);
+      g.beginPath(); g.arc(x, y, 5, 0, 7); g.fillStyle = o.color; g.fill(); g.lineWidth = 1.5; g.strokeStyle = '#000'; g.stroke();
     }
-    g.rotate(a - yaw); g.beginPath(); g.moveTo(0, 8); g.lineTo(-5.5, -6); g.lineTo(0, -3); g.lineTo(5.5, -6); g.closePath();
-    g.fillStyle = '#fff'; g.fill(); g.lineWidth = 1.5; g.strokeStyle = '#18203a'; g.stroke();
+    g.rotate(a - yaw); g.beginPath(); g.moveTo(0, 9); g.lineTo(-6, -6); g.lineTo(0, -3); g.lineTo(6, -6); g.closePath();
+    g.fillStyle = '#fff'; g.fill(); g.lineWidth = 1.5; g.strokeStyle = '#000'; g.stroke();
   }
 
   // Namensschild eines Mitspielers (Name + kleine Energieleiste)

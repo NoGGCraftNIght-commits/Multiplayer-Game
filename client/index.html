@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Spritzstadt</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Oswald:wght@400;500;600&display=swap">
 <link rel="stylesheet" href="css/style.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><circle cx='32' cy='36' r='22' fill='%2335c2ff'/><circle cx='24' cy='28' r='6' fill='%23fff'/></svg>">
 <script type="importmap">
@@ -61,7 +61,7 @@
         </details>
       </div>
     </div>
-    <p class="hint-small">PC/Chromebook: WASD · Maus oder Trackpad (auch Pfeiltasten) · Klick oder V = Spritzen · Rechtsklick oder C = Zielen · F = Einsteigen · E = Hallo · Tab = Punkte<br>Tablet/Handy: Stick links · Wischen rechts · Tasten rechts – wird automatisch erkannt</p>
+    <p class="hint-small">PC/Chromebook: WASD · Maus oder Trackpad (auch Pfeiltasten) · Klick oder V = Spritzen · Rechtsklick oder C = Zielen · F = Einsteigen · E = Hallo · Tab halten = Waffenrad · L = Punkte<br>Tablet/Handy: Stick links · Wischen rechts · Tasten rechts – wird automatisch erkannt</p>
   </div>
 </div>
 
@@ -100,18 +100,22 @@
     <button id="roomBadge" title="Einladungslink kopieren">Raum <b id="roomCode">—</b> · <span id="playerCount">1</span>/16 <span class="copy">Link kopieren</span></button>
     <button id="pauseBtn" class="round" aria-label="Pause">II</button>
   </div>
-  <canvas id="minimap" width="180" height="180"></canvas>
-  <div id="clock"></div>
-  <div id="stars" class="off" aria-label="Fahndungssterne"><b id="starsOn"></b><span id="starsOff">★★★★★</span></div>
+  <div id="radar">
+    <canvas id="minimap" width="260" height="170"></canvas>
+    <div class="bars"><div class="ebar"><i id="hpbar"></i></div><div class="ebar car"><i id="carbar"></i></div></div>
+  </div>
+  <div id="tr">
+    <div id="clock"></div>
+    <div id="weapon"><canvas id="wicon" width="120" height="40"></canvas><span id="ammo">40</span></div>
+    <div id="wname"></div>
+    <div id="stars" class="off" aria-label="Fahndungssterne"><b id="starsOn"></b><span id="starsOff">★★★★★</span></div>
+  </div>
   <div id="feed"></div>
   <div id="crosshair"><i></i><i></i><i></i><i></i></div>
   <div id="hitmarker"></div>
   <div id="hint"></div>
-  <div id="status">
-    <div class="energy"><span>Energie</span><div class="ebar"><i id="hpbar"></i></div></div>
-    <div id="weapon"><b id="wname">Wasserspritze</b> <span id="ammo">40</span></div>
-    <div id="speed" class="hidden"><b id="kmh">0</b> km/h · <span id="vname"></span></div>
-  </div>
+  <div id="speed" class="hidden"><b id="vname"></b><span><b id="kmh">0</b> km/h</span></div>
+  <div id="wheel" class="hidden"></div>
   <div id="ko" class="hidden"><b>Durchgeweicht!</b><span id="kotext"></span></div>
   <div id="vignette"></div>
   <div id="scoreboard" class="hidden"><h3>Punkte</h3><table><tbody id="scores"></tbody></table></div>

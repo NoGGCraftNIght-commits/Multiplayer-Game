@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
-import { AVATARS, VEHICLE_TYPES, WEAPONS } from './shared.js';
+import { AVATARS, VEHICLE_TYPES } from './shared.js';
 
 export const MODELS = [
-  AVATARS[0], 'avatar_clips', ...VEHICLE_TYPES, ...WEAPONS.map(w => w.model),
+  AVATARS[0], 'avatar_clips', ...VEHICLE_TYPES,
   'tree_oak', 'tree_pine', 'tree_fat', 'tree_palm', 'bush', 'bush_large', 'rock_small', 'barrel', 'crate',
 ];
 export const SOUNDS = ['shoot', 'hit', 'impact', 'land', 'step', 'ui', 'confirm', 'kill', 'hurt', 'coin', 'dash'];
