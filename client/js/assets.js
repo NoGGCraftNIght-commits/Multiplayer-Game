@@ -7,6 +7,7 @@ import { AVATARS, VEHICLE_TYPES } from './shared.js';
 export const MODELS = [
   AVATARS[0], 'avatar_clips', ...VEHICLE_TYPES,
   'tree_oak', 'tree_pine', 'tree_fat', 'tree_palm', 'bush', 'bush_large', 'rock_small', 'barrel', 'crate',
+  'tree_autumn', 'tree_pine_tall', 'flower_red', 'satellite_dish', 'generator', 'cargo_ship', 'target', 'burger', 'fries', 'hot_dog', 'donut', 'cake', 'pizza',
 ];
 export const SOUNDS = ['shoot', 'hit', 'impact', 'land', 'step', 'ui', 'confirm', 'kill', 'hurt', 'coin', 'dash'];
 

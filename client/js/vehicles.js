@@ -96,7 +96,9 @@ export class Vehicles {
       if (b.type !== 'river') { addBox((b.x0 + b.x1) / 2, SLAB / 2, (b.z0 + b.z1) / 2, BLOCK / 2, SLAB / 2, BLOCK / 2); continue; }
       for (const [za, zb] of [[b.z0, z0], [z1, b.z1]]) addBox((b.x0 + b.x1) / 2, SLAB / 2, (za + zb) / 2, BLOCK / 2, SLAB / 2, (zb - za) / 2);
     }
-    city.solids.forEach((s, i) => { const h = heights[i] || 4; addBox((s.x0 + s.x1) / 2, h / 2, (s.z0 + s.z1) / 2, (s.x1 - s.x0) / 2, h / 2, (s.z1 - s.z0) / 2); });
+    // Läden: Autos stoßen am ganzen Grundriss an (dünne Wände würden bei Tempo durchtunneln)
+    const boxes = [...city.solids.filter(s => !s.bld), ...city.buildings.filter(b => b.room).map(b => ({ ...b.fp, h: b.h }))];
+    for (const s of boxes) { const y0 = s.y0 || 0; addBox((s.x0 + s.x1) / 2, (y0 + s.h) / 2, (s.z0 + s.z1) / 2, (s.x1 - s.x0) / 2, (s.h - y0) / 2, (s.z1 - s.z0) / 2); }
     for (const [x, z, hx, hz] of [[BEACH / 2, -HALF - 1, SIZE / 2 + BEACH / 2 + 6, 1], [BEACH / 2, HALF + 1, SIZE / 2 + BEACH / 2 + 6, 1], [-HALF - 1, 0, 1, SIZE / 2 + 2], [HALF + BEACH + 5, 0, 1, SIZE / 2 + 2]]) addBox(x, 2, z, hx, 2, hz);
     this.mine = null; // { v, rv } wenn ich fahre
     this.far = 400;   // Sichtweite für Autos, setzt main.js nach der Qualitätsstufe

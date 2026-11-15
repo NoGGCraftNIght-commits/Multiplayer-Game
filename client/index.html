@@ -103,6 +103,7 @@
   </div>
   <div id="tr">
     <div id="clock"></div>
+    <div id="cash">$0</div>
     <div id="weapon"><canvas id="wicon" width="120" height="40"></canvas><span id="ammo">40</span></div>
     <div id="wname"></div>
     <div id="stars" class="off" aria-label="Fahndungssterne"><b id="starsOn"></b><span id="starsOff">★★★★★</span></div>
@@ -113,6 +114,11 @@
   <div id="hint"></div>
   <div id="speed" class="hidden"><b id="vname"></b><span><b id="kmh">0</b> km/h</span></div>
   <div id="wheel" class="hidden"></div>
+    <div id="shop" class="hidden" role="dialog" aria-labelledby="shopTitle">
+      <h3 id="shopTitle">Waffenladen</h3>
+      <div id="shopList"></div>
+      <p class="note" id="shopNote">1–3 kaufen · E schließen</p>
+    </div>
   <div id="ko" class="hidden"><b>Durchgeweicht!</b><span id="kotext"></span></div>
   <div id="vignette"></div>
   <div id="scoreboard" class="hidden"><h3>Punkte</h3><table><tbody id="scores"></tbody></table></div>

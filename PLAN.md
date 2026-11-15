@@ -140,6 +140,25 @@ Regel: nur Aufbau und Stimmung nachgebaut. Keine Original-Schrift, Logos, Icons,
 - ☑ `npm test`, `e2e.cjs` low + medium, `touch.cjs`, Bilder Tag/Nacht
 - ☑ README: Steuerung (Waffenrad, L), Lizenzen (Oswald, Blaster-Zeile entfernt)
 
+# Auftrag 15.11.2026 (2): Fluss, Berge, Parks, Läden, Waffen, Shader – Stand
+
+## Fertig
+- ☑ Fluss: Betonkanal in Blockreihe 5 (`RIVER` in shared.js), 6 Brücken, 2 Sprungrampen (Bogen aus 3 Stücken, Sprung ab ~95 km/h, Prämie 100 $), Flussbett befahrbar, im Kanal mehr Zugkraft
+- ☑ Berge im Norden/Westen hinter dem Meer (Höhenraster je Stufe, eigener Dunst), Frachtschiffe
+- ☑ Parks: Wegekreuz, Brunnen oder Teich, Bänke, Hecken (fest), Laternen, Blumen, mehr Baumarten
+- ☑ Häuser: Backstein mit Feuertreppe, Parkhaus, Strandhotel, Wassertanks, Satellitenschüsseln/Aggregate
+- ☑ 74 betretbare Läden (Supermarkt, Imbiss, Bar, Mode, 3 Waffenläden, Lobbys): Türöffnung, Innenraum, Möbel fest; Kollision = Wände + Decke (`y0`), Autos stoßen am ganzen Grundriss an
+- ☑ Waffen: Pistole, Maschinenpistole, Pump-Schrotflinte, Sturmgewehr (keine Marken); Start nur Pistole; Fundorte (20, Respawn 45 s) und Kauf am Tresen; Geld (Start 300 $, K.o. +150 $); alles auf dem Server geprüft
+- ☑ Fahrzeuge neu: Feuerwehr, Müllwagen, Rennwagen, Pritschenwagen, Kleinlaster (Kenney, CC0)
+- ☑ Shader-Stufen als Karten im Startmenü: Chromebook Turbo, Chromebook (Lambert, 30 fps, Physik 30 Hz), Niedrig, Mittel, Hoch, Kino (Farbfilter/Vignette); Chromebook wird erkannt
+- ☑ Tests: `npm test` (Fundort, Kauf, fremde Waffe, Verkehr meidet Rampen), Physik-Test Sprung/Brücke/Ausfahrt, Bilder
+
+## Offen
+- Echte Chromebook-Messung (nur Software-Grafik geprüft)
+- Ladenpersonal (Figuren hinter dem Tresen), Türen zum Aufschieben, Geld-Beute
+- Innenräume nur im Erdgeschoss; Obergeschosse bleiben massiv
+- „2D-Modelle“ als 3D-Modelle verstanden (Tippfehler angenommen)
+
 ## Hinweise für die nächste Sitzung
 - Bild-Werkzeuge liegen nur im Scratchpad (geht verloren): `view.cjs` = Playwright mit Server im selben Prozess, Teleport setzt auch Serverposition (`place`). Bei Verlust neu schreiben: Server per `process.env.PORT` + `import('server/server.js')` starten, `?debug` öffnet `window.G`.
 - Testpunkt Straße: `x = roadCenter(3)`, `z = blockMin(3) + 20` (Werte aus `shared.js`).

@@ -2,7 +2,7 @@
 // Aufbau per direktem Zugriff auf den Serverzustand (place), geprüft wird über das Netzprotokoll.
 import assert from 'node:assert/strict';
 import { io as connect } from 'socket.io-client';
-import { MAX_PLAYERS, WEAPONS, AVATARS, buildCity, node, RIVER, JUMPS, ROAD, roadCenter, riverY } from '../client/js/shared.js';
+import { MAX_PLAYERS, WEAPONS, AVATARS, buildCity, node, RIVER, JUMPS, ROAD, roadCenter, riverY, pushOut, START_MONEY } from '../client/js/shared.js';
 
 process.env.PORT ||= '3987';
 const { httpServer, io, rooms } = await import('./server.js');
@@ -37,12 +37,26 @@ assert.equal(rb.room, ra.room); assert.equal((await joined).name, 'Ben'); assert
 step('Beitritt');
 
 const room = rooms.get(ra.room), all = [...room.players.values()], pa = all.find(p => p.id === ra.id), pb = all.find(p => p.id === rb.id);
-const [X, Z] = node(2, 2), wall = buildCity().solids[0], wz = (wall.z0 + wall.z1) / 2; // freie Kreuzung, ein Gebäude
+const [X, Z] = node(2, 2), wall = buildCity().buildings.find(q => !q.room).fp, wz = (wall.z0 + wall.z1) / 2; // freie Kreuzung, ein Gebäude
 const fixes = [], ammoMsgs = []; a.on('fix', f => fixes.push(f)); a.on('ammo', m => ammoMsgs.push(m));
 let hp = null; b.on('hp', d => { hp = d; });
 let seen = 0; b.on('shoot', () => { seen++; });
 const shoot = (w, x, z, dx) => a.emit('shoot', { w, o: [x, 1.4, z], d: [dx, 0, 0], seed: 1 });
 const hitB = (w) => a.emit('hit', { t: 'p', id: rb.id, w });
+
+// --- Waffen besitzen: am Anfang nur die Pistole; Fundort und Waffenladen geben weitere
+assert.deepEqual([ra.own, ra.money], [[true, false, false, false], START_MONEY], 'Start: Pistole und Startgeld');
+const cityT = buildCity(), pk = cityT.pickups.findIndex(q => q.w === 1 && q.y < 1), P0 = cityT.pickups[pk];
+place(pa, P0.x + 1, P0.z); const owned = once(a, 'own'), took = once(b, 'pickup');
+a.emit('pick', pk); assert.deepEqual([(await owned).own[1], (await took).i], [true, pk], 'Fundort gibt die Waffe, alle sehen ihn leer');
+a.emit('pick', pk); await sleep(150); assert(room.pickups[pk] > Date.now(), 'Fundort bleibt eine Weile leer');
+const shop = cityT.buildings.find(q => q.buy), buy = (w) => new Promise(res => a.emit('buy', w, res));
+place(pa, X, Z); assert.equal(await buy(3), 'Nur am Tresen eines Waffenladens', 'Kaufen nur im Laden');
+place(pa, ...shop.buy); pa.money = 300; assert.equal(await buy(3), 'Zu wenig Geld');
+pa.money = 1000; assert.equal(await buy(3), ''); assert.deepEqual([pa.own[3], pa.money], [true, 1000 - WEAPONS[3].price], 'Kauf zieht Geld ab');
+assert(pushOut(cityT.solids, shop.buy[0], shop.buy[1], 0.4) === null, 'im Laden ist Platz zum Stehen');
+pa.own[2] = false; shoot(2, shop.buy[0], shop.buy[1], -1); await sleep(100); assert.equal(pa.ammo[2], WEAPONS[2].mag, 'fremde Waffe schießt nicht');
+step('Waffen finden und kaufen');
 
 // --- Position: normale Schritte kommen an, Teleport und Gebäude-Innenraum werden zurückgesetzt
 place(pa, X, Z);

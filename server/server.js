@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { Server } from 'socket.io';
 import {
   MAX_PLAYERS, TICK_HZ, PED_HZ, A, AIM_FLAG, AVATARS, COPS, WEAPONS, VEHICLES, VEHICLE_TYPES, CAR_HIT_DAMAGE, GRID, CELL, HALF, BEACH, LANE, ROAD,
-  buildCity, sidewalkLoop, node, roadOpen, rng, clamp, pushOut, sanitizeName, sanitizeRoom,
+  buildCity, sidewalkLoop, node, roadOpen, rng, START_MONEY, KO_MONEY, JUMP_MONEY, PICKUP_RESPAWN, RIVER, JUMPS, roadCenter, clamp, pushOut, sanitizeName, sanitizeRoom,
 } from '../client/js/shared.js';
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -49,7 +49,8 @@ const r2 = (v) => Math.round(v * 100) / 100;
 const finite = (...a) => a.every(Number.isFinite);
 
 // ---------- Prüf-Helfer: der Server traut dem Client nur Eingaben zu, alles Spielentscheidende rechnet er selbst ----------
-const walls = city.solids.slice(0, city.buildings.length); // nur Gebäude: höher als jede Figur, also reicht die Draufsicht
+const walls = city.solids.filter(s => s.wall); // Hauswände: höher als jede Figur, also reicht die Draufsicht
+const footprints = city.buildings.map(b => b.fp); // ganze Grundrisse (Hubschrauber setzt niemanden in ein Haus ab)
 // schneidet die Strecke a -> a+d das (um m verkleinerte) Rechteck?
 function crosses(ax, az, dx, dz, s, m) {
   let t0 = 0, t1 = 1;
@@ -73,6 +74,7 @@ const byId = (room, id) => { for (const p of room.players.values()) if (p.id ===
 // Munition führt der Server: kein Schuss ohne Vorrat, beim Nachladen oder schneller als die Feuerrate
 function takeShot(p, wi, now) {
   const w = WEAPONS[wi], cost = 0.9 / w.rate;
+  if (!p.own[wi]) return false; // Waffe noch nicht gefunden oder gekauft
   if (p.reloadW === wi) { if (now < p.reloadAt) return false; p.ammo[wi] = w.mag; }
   p.reloadW = -1; // Waffenwechsel bricht das Nachladen ab (wie im Client)
   p.credit = Math.min(p.credit + (now - p.shotT) / 1000, cost + 0.25); p.shotT = now; // Zeitguthaben: verträgt Netz-Jitter, nicht Dauerfeuer
@@ -117,7 +119,8 @@ function randomSidewalkSpot(rand = Math.random) {
 // ---------- Raum ----------
 function createRoom(code) {
   const rand = rng(Math.floor(Math.random() * 1e9));
-  const room = { code, players: new Map(), nextPid: 1, vehicles: [], peds: [], start: Date.now(), emptySince: 0, rand, cops: Array(COP_SLOTS).fill(null), heli: null };
+  const room = { code, players: new Map(), nextPid: 1, vehicles: [], peds: [], start: Date.now(), emptySince: 0, rand, cops: Array(COP_SLOTS).fill(null), heli: null,
+    pickups: city.pickups.map(() => 0) }; // je Fundort: frei ab (ms)
   // geparkte Autos
   city.parking.forEach((s, i) => {
     room.vehicles.push(makeVehicle(i, VEHICLE_TYPES[Math.floor(rand() * VEHICLE_TYPES.length)], s.x, s.z, s.yaw));
@@ -269,14 +272,15 @@ io.on('connection', (socket) => {
     const [x, z] = randomSidewalkSpot();
     me = { id: room.nextPid++, sid: socket.id, name: sanitizeName(data.name), avatar: clamp(data.avatar | 0, 0, AVATARS.length - 1), color,
       x, y: 0, z, yaw: 0, anim: A.idle, veh: 0, weap: 0, pitch: 0, hp: 100, alive: true, score: 0, kos: 0, hitLog: [], lastSt: 0,
-      ammo: WEAPONS.map(w => w.mag), reloadW: -1, reloadAt: 0, credit: 2, shotT: 0, shots: [], budget: 12, moveT: Date.now(), fixT: 0, wanted: 0, seenT: 0, starsSent: 0, copT: 0 };
+      ammo: WEAPONS.map(w => w.mag), reloadW: -1, reloadAt: 0, credit: 2, shotT: 0, shots: [], budget: 12, moveT: Date.now(), fixT: 0, wanted: 0, seenT: 0, starsSent: 0, copT: 0,
+      own: WEAPONS.map((w, i) => i === 0), money: START_MONEY, jumpT: 0 };
     room.players.set(socket.id, me);
     room.emptySince = 0;
     socket.join(code);
     socket.to(code).emit('pjoin', publicPlayer(me));
     ack({ id: me.id, room: code, seed: SEED, spawn: [x, z], serverTime: Date.now(), start: room.start,
       players: [...room.players.values()].map(publicPlayer), vehicles: room.vehicles.map(vehState),
-      damage: room.vehicles.filter(v => v.hp < 100 || v.st).map(dmgState) });
+      damage: room.vehicles.filter(v => v.hp < 100 || v.st).map(dmgState), own: me.own, money: me.money, pickups: pickupState(room) });
   });
 
   // eigener Spielerzustand: [x,y,z,yaw,anim,weap,pitch]
@@ -288,7 +292,7 @@ io.on('connection', (socket) => {
     const [x, y, z, yaw, anim, weap, pitch] = s;
     if (!finite(x, y, z, yaw, pitch)) return;
     if (!me.alive) return; // während KO bestimmt der Server
-    me.yaw = yaw; me.anim = clamp(anim | 0, 0, 127); me.weap = clamp(weap | 0, 0, WEAPONS.length - 1); me.pitch = clamp(pitch, -1.5, 1.5);
+    me.yaw = yaw; me.anim = clamp(anim | 0, 0, 127); me.weap = me.own[weap | 0] ? weap | 0 : 0; me.pitch = clamp(pitch, -1.5, 1.5);
     if (me.veh) return; // am Steuer zählt die (geprüfte) Position des Autos
     // Tempo-Limit zu Fuß (1,5-faches Sprinttempo, 12 m Puffer) und keine Position in Gebäuden: sonst setzt der Server zurück
     const nx = clamp(x, -HALF, HALF + BEACH + 5), nz = clamp(z, -HALF, HALF), d = Math.hypot(nx - me.x, nz - me.z);
@@ -324,6 +328,11 @@ io.on('connection', (socket) => {
     }
     v.vx = vx; v.vz = vz; v.vok = ok;
     [, , v.y, , v.qx, v.qy, v.qz, v.qw, v.steer] = s;
+    // Sprung über den Fluss: Abheben an einer Rampe, ohne Wasserkontakt am anderen Ufer landen -> Prämie (alle 15 s)
+    const side = (q) => q < RIVER.z0 - 2 ? -1 : q > RIVER.z1 + 2 ? 1 : 0;
+    if (side(v.z) && !side(z) && JUMPS.some(i => Math.abs(x - roadCenter(i)) < ROAD)) v.jump = [side(v.z), now];
+    if (v.jump && !side(z) && s[2] < -1) v.jump = null; // ins Wasser gefallen
+    if (v.jump && side(z) === -v.jump[0]) { if (now - v.jump[1] < 4000 && now - me.jumpT > 15000) { me.jumpT = now; me.money += JUMP_MONEY; sendOwn(me); socket.emit('stunt', JUMP_MONEY); } v.jump = null; }
     v.x = x; v.z = z; v.y = clamp(v.y, -4, 100);
     v.moved = now;
     me.x = v.x; me.z = v.z; me.y = v.y;
@@ -357,6 +366,22 @@ io.on('connection', (socket) => {
     me.shots.push({ wi, o: s.o, d, t: now, left: WEAPONS[wi].pellets });
     socket.to(room.code).volatile.emit('shoot', { id: me.id, w: wi, o: s.o.map(r2), d, seed: s.seed | 0 });
     scarePeds(room, s.o[0], s.o[2], 16);
+  });
+
+  // Waffe aufheben: Server prüft Abstand (auch in der Höhe: Brücke über dem Flussbett) und ob der Fundort frei ist
+  socket.on('pick', (i) => {
+    const q = city.pickups[i | 0], now = Date.now();
+    if (!me || !me.alive || me.veh || !q || room.pickups[i | 0] > now || me.own[q.w] || Math.hypot(me.x - q.x, me.z - q.z) > 2.5 || Math.abs(me.y - q.y) > 1.6) return;
+    room.pickups[i | 0] = now + PICKUP_RESPAWN; me.own[q.w] = true; me.ammo[q.w] = WEAPONS[q.w].mag;
+    io.to(room.code).emit('pickup', { i: i | 0, left: PICKUP_RESPAWN, by: me.id, w: q.w });
+    sendOwn(me);
+  });
+  // Kaufen im Waffenladen: am Tresen stehen, genug Geld, Waffe noch nicht im Besitz
+  socket.on('buy', (wi, ack) => {
+    wi |= 0; const w = WEAPONS[wi], shop = city.buildings.find(b => b.buy && Math.hypot(me?.x - b.buy[0], me?.z - b.buy[1]) < 3.5);
+    const res = !me || !w || !me.alive ? 'Nicht möglich' : !shop ? 'Nur am Tresen eines Waffenladens' : me.own[wi] ? 'Hast du schon' : me.money < w.price ? 'Zu wenig Geld' : '';
+    if (!res) { me.money -= w.price; me.own[wi] = true; me.ammo[wi] = w.mag; sendOwn(me); }
+    if (typeof ack === 'function') ack(res);
   });
 
   socket.on('reload', (wi) => { wi |= 0; if (me && WEAPONS[wi] && me.ammo[wi] < WEAPONS[wi].mag) startReload(me, wi, Date.now()); });
@@ -423,6 +448,9 @@ function releaseVehicle(room, p) {
   io.to(room.code).emit('vown', { vid: v.id, driver: 0 });
 }
 
+const pickupState = (room) => room.pickups.map(t => Math.max(0, t - Date.now())); // ms bis ein Fundort wieder frei ist
+function sendOwn(p) { io.to(p.sid).emit('own', { own: p.own, money: p.money }); }
+
 // Schaden anwenden. by = Verursacher oder null; w = Waffe, -1 Auto, -2 Explosion, -3 Stadtwache
 function hurt(room, target, dmg, by, w) {
   target.hp = Math.max(0, target.hp - dmg);
@@ -433,7 +461,7 @@ function hurt(room, target, dmg, by, w) {
 function knockOut(room, target, by, w) {
   target.alive = false; target.anim = A.down; target.kos++; target.wanted = 0;
   if (by === target) by = null;
-  if (by) by.score++;
+  if (by) { by.score++; by.money += KO_MONEY; sendOwn(by); }
   if (target.veh) releaseVehicle(room, target);
   io.to(room.code).emit('ko', { id: target.id, by: by?.id || 0, w, score: by?.score || 0, kos: target.kos });
   scarePeds(room, target.x, target.z, 14);
@@ -495,7 +523,7 @@ const roadIdx = (v) => clamp(Math.round((v + HALF - ROAD / 2) / CELL), 0, GRID);
 // Flughöhe: über freiem Gelände niedrig, über und neben Gebäuden mit Abstand darüber
 function roofAt(x, z) {
   let m = 12;
-  walls.forEach((s, i) => { if (x > s.x0 - 14 && x < s.x1 + 14 && z > s.z0 - 14 && z < s.z1 + 14) m = Math.max(m, city.buildings[i].floors * 3.2 + 3); });
+  for (const b of city.buildings) { const s = b.fp; if (x > s.x0 - 14 && x < s.x1 + 14 && z > s.z0 - 14 && z < s.z1 + 14) m = Math.max(m, b.floors * 3.2 + 3); }
   return m + 14;
 }
 const newCop = (id, x, z, y, state, target) => ({ id, x, y, z, yaw: 0, anim: A.idle, kind: Math.floor(Math.random() * COPS.length), hp: 60, state, target, cool: 1, idle: 0, timer: 0, node: null });
@@ -519,7 +547,7 @@ function stepWanted(room, dt, now) {
   for (const p of players) {
     const n = stars(p), slot = cops.indexOf(null), mine = cops.filter(c => c && c.target === p.id && c.state !== 'down').length, h = room.heli;
     if (!n || !p.alive || slot < 0 || mine >= WANT[n] || now - p.copT < 2500) continue;
-    if (h && h.target === p.id && Math.hypot(h.x - p.x, h.z - p.z) < 24 && Math.abs(h.y - h.want) < 3 && !pushOut(walls, h.x, h.z, 2.5)) {
+    if (h && h.target === p.id && Math.hypot(h.x - p.x, h.z - p.z) < 24 && Math.abs(h.y - h.want) < 3 && !pushOut(footprints, h.x, h.z, 2.5)) {
       p.copT = now; cops[slot] = newCop(slot, h.x + Math.random() * 4 - 2, h.z + Math.random() * 4 - 2, h.y - 2, 'rope', p.id);
     } else if (n < 3 || mine < 2) {
       const spots = [];
@@ -582,7 +610,7 @@ function stepWanted(room, dt, now) {
   h.gone = 0; h.target = t.id;
   // Schwebepunkt: 16 m neben dem Ziel (von unten sichtbar, Platz zum Abseilen), nie über einem Gebäude
   let ox = h.x - t.x, oz = h.z - t.z; const ol = Math.hypot(ox, oz) || 1; ox *= 16 / ol; oz *= 16 / ol;
-  for (let k = 0; k < 8 && pushOut(walls, t.x + ox, t.z + oz, 2.5); k++) [ox, oz] = [ox * 0.707 - oz * 0.707, ox * 0.707 + oz * 0.707];
+  for (let k = 0; k < 8 && pushOut(footprints, t.x + ox, t.z + oz, 2.5); k++) [ox, oz] = [ox * 0.707 - oz * 0.707, ox * 0.707 + oz * 0.707];
   const dx = t.x + ox - h.x, dz = t.z + oz - h.z, d = Math.hypot(dx, dz) || 1, ux = dx / d, uz = dz / d;
   h.want = Math.max(roofAt(h.x, h.z), d > 40 ? roofAt(h.x + ux * 40, h.z + uz * 40) : 0, d > 80 ? roofAt(h.x + ux * 80, h.z + uz * 80) : 0);
   const sp = Math.min(28, d * 0.9) * (h.y < h.want - 6 ? 0.25 : 1); // erst steigen, dann über Häuser fliegen

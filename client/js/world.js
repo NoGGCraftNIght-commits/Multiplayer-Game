@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { stdMat, QUALITY } from './gfx.js';
+import { stdMat, QUALITY, LITE } from './gfx.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
@@ -10,7 +10,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { assets } from './assets.js';
 import { makeBuildings } from './buildings.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { GRID, BLOCK, ROAD, WALK, CELL, SIZE, HALF, BEACH, RIVER, BRIDGES, BRIDGE_HALF, JUMPS, RIVER_ROW, blockMin, roadCenter, riverY, rampParts } from './shared.js';
+import { GRID, BLOCK, ROAD, WALK, CELL, SIZE, HALF, BEACH, RIVER, BRIDGES, BRIDGE_HALF, JUMPS, RIVER_ROW, blockMin, roadCenter, riverY, rampParts, localPoint } from './shared.js';
 
 export const SLAB = 0.14; // Gehweghöhe (Bordstein)
 
@@ -281,7 +281,11 @@ export class World {
     const B = makeBuildings(city, SLAB, this.settings.quality !== 'low');
     scene.add(...B.meshes);
     this.litMats = B.lit;
-    this.heights = B.heights; // gleiche Reihenfolge wie city.solids: erst Gebäude, dann feste Bäume
+    this.heights = city.solids.map(s => s.h); // Oberkanten für Treffer und Kamera
+    // Innenräume je Stadt-Kachel: nur in der Nähe zeichnen; Kleinkram drinnen nur, wenn eine Ladentür nah ist
+    this.rooms = B.rooms.map(R => { const g = new THREE.Group(); g.add(...R.meshes); g.visible = false; scene.add(g); return { x: R.x, z: R.z, g }; });
+    this.inside = new THREE.Group(); scene.add(this.inside);
+    this.doors = city.buildings.filter(b => b.room).map(b => localPoint(b, 0, b.d / 2));
     this.neonMat = new THREE.MeshBasicMaterial({ toneMapped: false });
     // Ampeln an den Kreuzungen (nur Optik): Mast mit Ausleger über die Fahrbahn, Lampen leuchten über das Neon-Mesh
     {
@@ -304,15 +308,19 @@ export class World {
     const NATURE = { leafsGreen: 0x3f9a44, leafsDark: 0x2f7240, woodBark: 0x86684a, woodBarkDark: 0x5f4630, grass: 0x4f9a45, dirt: 0x8a7a66 };
 
     const propsBy = {};
+    const skip = LITE ? ['flower_red', 'satellite_dish', 'generator'] : []; // Chromebook: Kleinkram weglassen spart Draw Calls
     for (const p of city.props) {
-      const m = new THREE.Matrix4().compose(tmpP.set(p.x, SLAB, p.z), tmpQ.setFromAxisAngle(new THREE.Vector3(0, 1, 0), p.rot), tmpS.setScalar(p.s));
-      (propsBy[p.kind] ||= []).push(m);
+      if (skip.includes(p.kind)) continue;
+      const m = new THREE.Matrix4().compose(tmpP.set(p.x, p.y ?? SLAB, p.z), tmpQ.setFromAxisAngle(new THREE.Vector3(0, 1, 0), p.rot), tmpS.setScalar(p.s));
+      (propsBy[p.kind + (p.inside ? '|in' : '')] ||= []).push(m);
     }
-    for (const sd of city.solids.slice(this.heights.length)) this.heights.push(sd.h || 4); // Bäume 4 m, Brunnen und Hecken niedriger
-    for (const k in propsBy) {
+    for (const key in propsBy) {
+      const [k, inside] = key.split('|');
       assets.models[k].scene.traverse(o => { if (o.isMesh && NATURE[o.material.name]) o.material.color.set(NATURE[o.material.name]); });
-      addInstanced(scene, assets.models[k].scene, propsBy[k]);
+      addInstanced(inside ? this.inside : scene, assets.models[k].scene, propsBy[key], !inside);
     }
+    // Frachtschiffe vor der Küste (Kenney-Modell, auf Schiffsgröße gestreckt)
+    if (!LITE) addInstanced(scene, assets.models.cargo_ship.scene, [[-HALF - 70, -40, 0.4], [HALF + BEACH + 150, 90, -1.2]].map(([x, z, a]) => new THREE.Matrix4().compose(tmpP.set(x, -2.5, z), tmpQ.setFromAxisAngle(Y, a), tmpS.setScalar(26))), false);
 
     // Sonnenschirme + Handtücher am Strand
     const shade = new THREE.ConeGeometry(1.5, 0.55, 10); shade.translate(0, 2.2, 0);
@@ -496,6 +504,8 @@ export class World {
 
   // tod: 0..1 (0.25 Sonnenaufgang, 0.5 Mittag, 0.75 Sonnenuntergang)
   updateTime(tod, focus) {
+    this.inside.visible = this.doors.some(([x, z]) => (x - focus.x) ** 2 + (z - focus.z) ** 2 < 32 * 32);
+    for (const R of this.rooms) R.g.visible = (R.x - focus.x) ** 2 + (R.z - focus.z) ** 2 < this.q.rooms ** 2;
     const phi = (tod - 0.25) * Math.PI * 2, clamp = THREE.MathUtils.clamp;
     const dir = new THREE.Vector3(Math.cos(phi), Math.sin(phi), 0.35).normalize();
     const day = clamp(dir.y * 4 + 0.15, 0, 1), dusk = clamp(1 - Math.abs(dir.y) * 5, 0, 1), dark = 1 - day;

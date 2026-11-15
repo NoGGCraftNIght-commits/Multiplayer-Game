@@ -4,7 +4,7 @@ import { loadAll, loadModel, assets } from './assets.js';
 import { World, SLAB } from './world.js';
 import { QUALITY, DEFAULT_Q, START_Q, LITE, CHROMEBOOK } from './gfx.js';
 import { Vehicles } from './vehicles.js';
-import { Character, gunIcon } from './character.js';
+import { Character, gunIcon, makeBlaster } from './character.js';
 import { Combat } from './combat.js';
 import { Audio } from './audio.js';
 import { Input } from './input.js';
@@ -41,7 +41,7 @@ const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _h = new THREE.Vector3
 const head = (o) => _h.set(o.pos.x, o.pos.y + (o.veh ? 2.5 : 2.05), o.pos.z);
 
 const canvas = $('game'), ui = {};
-for (const id of ['hpbar', 'carbar', 'wicon', 'wheel', 'wname', 'ammo', 'weapon', 'speed', 'kmh', 'vname', 'crosshair', 'hitmarker', 'hint', 'ko', 'kotext', 'vignette', 'scoreboard', 'clock', 'playerCount', 'tAct', 'tHorn', 'tFire', 'tAim', 'tWeapon']) ui[id] = $(id);
+for (const id of ['hpbar', 'carbar', 'wicon', 'wheel', 'wname', 'ammo', 'weapon', 'speed', 'kmh', 'vname', 'crosshair', 'hitmarker', 'hint', 'ko', 'kotext', 'vignette', 'scoreboard', 'clock', 'playerCount', 'tAct', 'tHorn', 'tFire', 'tAim', 'tWeapon', 'cash', 'shop', 'shopList']) ui[id] = $(id);
 const my = { name: '', avatar: 0, color: COLORS[0][0] };
 const players = new Map(), joining = new Set(), peds = [], pedBuf = new Interp();
 // Stadtwache: 8 feste Plätze; ohne Wachen/Hubschrauber schickt der Server nichts -> Leerstand einsetzen
@@ -51,7 +51,7 @@ const cam = { yaw: 0, pitch: -0.12, dist: 3.9, side: 0.42, up: 1.6, fov: 65, fre
 let city, world, vehicles, combat, audio, input, hud, preview, net, me, heli, link = '';
 // ?debug: Spielzustand für automatische Tests offenlegen (G.tod = feste Tageszeit)
 const DEBUG = params.has('debug') ? window.G = { players, peds, cops, cam, tod: null, get heli() { return heli; }, get me() { return me; }, get net() { return net; }, get vehicles() { return vehicles; }, get combat() { return combat; }, get input() { return input; }, get world() { return world; } } : null;
-let phase = 'load', paused = false, roomStart = 0, sendT = 0, slowT = 0, lockLost = 0, koUntil = 0, koBy = '', hitT = 0, tod = 0.735, simT = 0, last = performance.now();
+let own = [true, false, false, false], money = 0, shopOpen = false, pickups = [], phase = 'load', paused = false, roomStart = 0, sendT = 0, slowT = 0, lockLost = 0, koUntil = 0, koBy = '', hitT = 0, tod = 0.735, simT = 0, last = performance.now();
 
 // ---------- Start ----------
 async function boot() {
@@ -141,7 +141,7 @@ async function join() {
   try { start(n, await n.join({ room: $('room').value, ...my }), url); } catch (e) {
     n.close(); phase = 'menu'; $('play').textContent = 'Spielen';
     const noServer = /Verbindung|antwortet/.test(e.message);
-    $('menuError').textContent = e.message + (noServer ? ' Prüfe die Server-Adresse unter „Server & Grafik“.' : '');
+    $('menuError').textContent = e.message + (noServer ? ' Prüfe die Server-Adresse unter „Server“.' : '');
     if (noServer) $('advanced').open = true;
   }
 }
@@ -153,7 +153,14 @@ function start(n, r, url) {
   me = { id: r.id, ...my, hp: 100, alive: true, score: 0, kos: 0, stars: 0, pos: new THREE.Vector3(x, world.groundY(x, z), z), yaw: 0, speed: 0, vy: 0, air: false,
     veh: null, busy: false, aim: false, pitch: 0, fireT: 0, emote: 'wave', emoteT: 0, stepD: 0, anim: 'idle', nearCar: null, nearPed: -1, char: new Character(my.avatar, my.color) };
   me.char.setWeapon(0); world.scene.add(me.char.root); gunIcon(0, ui.wicon);
-  ui.wheel.replaceChildren(...WEAPONS.map((w, i) => { const d = document.createElement('div'), c = Object.assign(document.createElement('canvas'), { width: 108, height: 36 }); gunIcon(i, c); d.append(c, w.name); return d; }));
+  own = r.own; money = r.money; renderWheel(); txt(ui.cash, cash(money));
+  // Fundorte: Waffe dreht sich über einem leuchtenden Ring (nur in der Nähe sichtbar)
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.45, 0.62, 28).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.75, depthWrite: false }));
+  pickups = city.pickups.map((q, i) => {
+    const g = new THREE.Group(), gun = makeBlaster(q.w); gun.scale.setScalar(1.7); gun.position.y = 0.9; g.add(gun, ring.clone());
+    g.position.set(q.x, q.y + 0.03, q.z); g.visible = false; world.scene.add(g);
+    return { ...q, i, g, gun, until: performance.now() + (r.pickups[i] || 0), tryT: 0 };
+  });
   for (const p of r.players) if (p.id !== me.id) addPlayer(p);
   for (const v of r.vehicles) vehicles.add(v);
   for (const d of r.damage) vehicles.setDamage(d, true);
@@ -173,6 +180,7 @@ function lock() { // klappt nur direkt nach einer Nutzergeste; sonst holt der n�
 function setPause(on) {
   if (phase !== 'play' || paused === on) return;
   paused = on; $('pause').classList.toggle('hidden', !on);
+  if (on && shopOpen) setShop(false);
   input.enabled = !on; input.fireHeld = input.aimHeld = false;
   if (on) document.exitPointerLock?.(); else lock();
 }
@@ -226,6 +234,14 @@ function bindNet() {
   });
   // Server-Korrekturen: echter Munitionsstand, abgelehnte Sprünge
   net.on('ammo', (a) => { combat.ammo = a; });
+  net.on('own', (o) => { // Besitz/Geld vom Server; neue Waffe gleich in die Hand
+    const got = o.own.findIndex((v, i) => v && !own[i]);
+    if (o.money !== money) { txt(ui.cash, cash(o.money)); ui.cash.classList.remove('on'); void ui.cash.offsetWidth; ui.cash.classList.add('on'); }
+    own = o.own; money = o.money; renderWheel(); if (shopOpen) renderShop();
+    if (got >= 0) { pickWeapon(got); audio.play('coin', { vol: 0.6 }); hud.feed(`${WEAPONS[got].name} erhalten`); }
+  });
+  net.on('pickup', ({ i, left }) => { if (pickups[i]) pickups[i].until = performance.now() + left; });
+  net.on('stunt', (m) => { hud.feed(`Sprung geschafft! +${cash(m)}`); audio.play('kill', { vol: 0.5 }); });
   net.on('fix', ([x, z]) => { if (!me.veh) { me.pos.x = x; me.pos.z = z; } });
   net.on('vfix', (s) => vehicles.fix(s));
   net.on('hp', ({ id, hp, by, w }) => {
@@ -298,10 +314,17 @@ function controls() {
     if (input.pressed('flip')) vehicles.resetUpright();
     return;
   }
+  if (shopOpen) { // Laden offen: 1–3 kaufen, E/Esc schließen; sonst nichts
+    for (let i = 1; i < WEAPONS.length; i++) if (input.pressed('w' + i)) buy(i);
+    if (input.pressed('interact') || input.pressed('enter')) setShop(false);
+    return;
+  }
+  if (me.shop && input.pressed('interact')) return setShop(true);
   let w = combat.weapon;
-  for (let i = 0; i < WEAPONS.length; i++) if (input.pressed('w' + i)) w = i;
-  if (input.pressed('weaponNext')) w++;
-  if (input.pressed('weaponPrev')) w--;
+  const step = (d) => { let k = w; do k = (k + d + WEAPONS.length) % WEAPONS.length; while (!own[k]); return k; };
+  for (let i = 0; i < WEAPONS.length; i++) if (input.pressed('w' + i) && own[i]) w = i;
+  if (input.pressed('weaponNext')) w = step(1);
+  if (input.pressed('weaponPrev')) w = step(-1);
   if (w !== combat.weapon) pickWeapon(w);
   if (input.pressed('reload')) combat.reload();
   if (input.pressed('jump') && !me.air) { me.vy = 5.4; me.air = true; }
@@ -310,7 +333,37 @@ function controls() {
   if (input.pressed('emoteNo')) emote(1, true);
 }
 
+const cash = (m) => '$' + m.toLocaleString('de-DE');
+// Waffenrad: fehlende Waffen blass, mit Preis
+function renderWheel() {
+  ui.wheel.replaceChildren(...WEAPONS.map((w, i) => {
+    const d = document.createElement('div'), c = Object.assign(document.createElement('canvas'), { width: 108, height: 36 }); gunIcon(i, c);
+    d.append(c, w.name); d.classList.toggle('locked', !own[i]);
+    if (!own[i]) d.append(Object.assign(document.createElement('small'), { textContent: `Laden ${cash(w.price)} oder finden` }));
+    return d;
+  }));
+}
+// Waffenladen: Menü mit Silhouette, Name, Preis
+function renderShop() {
+  ui.shopList.replaceChildren(...WEAPONS.map((w, i) => {
+    if (!i) return '';
+    const b = Object.assign(document.createElement('button'), { type: 'button', disabled: own[i] }), c = Object.assign(document.createElement('canvas'), { width: 92, height: 30 });
+    gunIcon(i, c); b.append(c, `${i}  ${w.name}`, Object.assign(document.createElement('b'), { textContent: own[i] ? 'gekauft' : cash(w.price) }));
+    b.onclick = () => buy(i);
+    return b;
+  }));
+}
+function setShop(on) {
+  shopOpen = on; ui.shop.classList.toggle('hidden', !on);
+  if (on) { renderShop(); audio.play('ui', { vol: 0.5 }); }
+}
+function buy(i) {
+  if (own[i]) return;
+  net.emit('buy', i, (err) => { if (err) { hud.feed(err); audio.play('hurt', { vol: 0.3 }); } });
+}
+
 function pickWeapon(w) {
+  if (!own[w]) return;
   combat.switchTo(w); me.char.setWeapon(combat.weapon); audio.play('ui', { vol: 0.4 });
   gunIcon(combat.weapon, ui.wicon); blip(ui.wname, combat.w.name);
 }
@@ -323,7 +376,7 @@ function weaponWheel(look, open) {
     wheel.v.x = clamp(wheel.v.x + look.x, -0.3, 0.3); wheel.v.y = clamp(wheel.v.y + look.y, -0.3, 0.3);
     if (Math.hypot(wheel.v.x, wheel.v.y) > 0.06) wheel.pick = (Math.round(Math.atan2(wheel.v.x, -wheel.v.y) / (Math.PI / 2)) + 4) % 4; // oben, rechts, unten, links
     [...ui.wheel.children].forEach((d, i) => d.classList.toggle('on', i === wheel.pick));
-  } else if (was && wheel.pick !== combat.weapon) pickWeapon(wheel.pick);
+  } else if (was && wheel.pick !== combat.weapon) pickWeapon(wheel.pick); // gesperrte Felder wählt pickWeapon nicht
   ui.wheel.classList.toggle('hidden', !open);
 }
 
@@ -560,10 +613,10 @@ function drawHud(dt, now) {
   ui.crosshair.style.opacity = v || !me.alive ? 0 : ''; ui.crosshair.classList.toggle('aim', me.aim);
   const key = (k, s) => touch ? s : `${k} – ${s}`;
   const hint = !me.alive || paused ? '' : !touch && document.pointerLockElement !== canvas ? 'Ins Spiel klicken, um die Maus zu fangen'
-    : v ? (v.st ? key('F', 'Raus hier – das Auto brennt!') : Math.abs(v.speed) < 3 ? key('F', 'Aussteigen') : '') : me.nearCar ? key('F', me.nearCar.cfg.name + ' fahren') : me.nearPed >= 0 ? key('E', 'Hallo sagen') : '';
+    : v ? (v.st ? key('F', 'Raus hier – das Auto brennt!') : Math.abs(v.speed) < 3 ? key('F', 'Aussteigen') : '') : me.nearCar ? key('F', me.nearCar.cfg.name + ' fahren') : shopOpen ? '' : me.shop ? key('E', 'Waffen kaufen') : me.nearPed >= 0 ? key('E', 'Hallo sagen') : '';
   if (hint) txt(ui.hint, hint);
   ui.hint.classList.toggle('on', !!hint);
-  ui.tAct.classList.toggle('hidden', !!v || me.nearPed < 0); ui.tHorn.classList.toggle('hidden', !v);
+  ui.tAct.classList.toggle('hidden', !!v || (me.nearPed < 0 && !me.shop)); ui.tHorn.classList.toggle('hidden', !v);
   for (const b of [ui.tFire, ui.tAim, ui.tWeapon]) b.classList.toggle('hidden', !!v);
   if (!me.alive) txt(ui.kotext, `${koBy} · weiter in ${Math.max(1, Math.ceil((koUntil - now) / 1000))} s`);
   ui.scoreboard.classList.toggle('hidden', !input.scoreboard);
@@ -571,7 +624,8 @@ function drawHud(dt, now) {
   hud.update(world.camera);
   if ((slowT += dt) < 0.1) return; // Rest: 10x pro Sekunde reicht
   slowT = 0;
-  hud.minimap(me.pos, v ? carYaw(v) : me.yaw, cam.yaw, [...players.values(), ...cops.filter(c => c.on)], vehicles.list);
+  const marks = [...city.buildings.filter(b => b.buy).map(b => ({ x: b.buy[0], z: b.buy[1], c: '#ff8a1f', r: 5 })), ...pickups.filter(q => now >= q.until && !own[q.w]).map(q => ({ x: q.x, z: q.z, c: '#ffd23f', r: 2.6 }))];
+  hud.minimap(me.pos, v ? carYaw(v) : me.yaw, cam.yaw, [...players.values(), ...cops.filter(c => c.on)], vehicles.list, marks);
   const m = Math.floor(tod * 1440);
   txt(ui.clock, `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`);
   txt(ui.playerCount, players.size + 1);
@@ -579,19 +633,33 @@ function drawHud(dt, now) {
 }
 
 // ---------- Schleife ----------
+// Fundorte drehen, nur nahe zeigen; berühren -> Server fragen (der prüft Abstand und ob frei)
+function updatePickups(dt, now) {
+  for (const q of pickups) {
+    const d2 = (q.x - me.pos.x) ** 2 + (q.z - me.pos.z) ** 2, free = now >= q.until;
+    q.g.visible = free && d2 < 70 * 70;
+    if (!q.g.visible) continue;
+    q.gun.rotation.y += dt * 1.6; q.gun.position.y = 0.9 + Math.sin(now / 400) * 0.08;
+    if (d2 < 1.6 * 1.6 && Math.abs(me.pos.y - q.y) < 1.6 && !me.veh && me.alive && !own[q.w] && now - q.tryT > 600) { q.tryT = now; net.emit('pick', q.i); }
+  }
+}
+
 function play(dt, now) {
-  const t = net.serverNow() - RENDER_DELAY, ctl = !paused && me.alive, look = input.consumeLook(dt), open = ctl && !me.veh && input.wheel;
+  const t = net.serverNow() - RENDER_DELAY, ctl = !paused && me.alive, look = input.consumeLook(dt), open = ctl && !me.veh && !shopOpen && input.wheel;
+  updatePickups(dt, now);
+  me.shop = !me.veh && me.alive && city.buildings.some(b => b.buy && Math.hypot(me.pos.x - b.buy[0], me.pos.z - b.buy[1]) < 1.8);
+  if (shopOpen && (!me.shop || !me.alive)) setShop(false);
   weaponWheel(look, open);
   if (!paused && !open) { cam.yaw -= look.x; cam.pitch = clamp(cam.pitch - look.y, -1.1, 1.2); }
   if (input.pressed('pause') && now - lockLost > 300) setPause(!paused); // Esc löst sonst Pause + sofort wieder Weiter aus
   if (ctl) controls();
   input.edges.clear();
-  if (me.veh) drive(dt, ctl, look); else walk(dt, ctl);
+  if (me.veh) drive(dt, ctl, look); else walk(dt, ctl && !shopOpen);
   vehicles.update(dt, t, world.night, world.camera.position);
   if (me.veh) { me.pos.copy(me.veh.pos); bump(me.veh, now); }
   updatePlayers(dt, t); updatePeds(dt, t); updateCops(dt, t); updateHeli(dt, t);
   camera(dt);
-  shoot(dt, ctl);
+  shoot(dt, ctl && !shopOpen);
   combat.update(dt);
   send(dt);
   const u = ((net.serverNow() - roomStart) / 1000 / DAY_LENGTH + 0.25) % 1; // 70 % der Zeit ist Tag, die Nacht läuft schneller

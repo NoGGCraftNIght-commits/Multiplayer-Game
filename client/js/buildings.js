@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { stdMat } from './gfx.js';
-import { rng } from './shared.js';
+import { rng, DOOR, DOOR_H, WALL_T } from './shared.js';
+import { gunIcon } from './character.js';
 
 // Prozedurale Miami-Häuser in echtem Maßstab (Geschoss 3,2 m, Tür 2,2 m): Kästen mit gekachelten
 // Fassaden-Texturen, Simsen, Balkonen und Dachaufbauten. Fenster und Ladenschilder leuchten nachts.
@@ -182,6 +183,42 @@ function shopfront(r) {
   return facadeMat(c, rc, ec, 1);
 }
 
+// Innenräume: Böden (3 x 2 Felder: Fliesen, Schachbrett, Holz / Beton, Marmor, Teppich) und Waren
+// (Produkte, Getränke, Flaschen / Waffen, Aufzugtüren, Kleidung) als je ein Atlas: zusammen zwei Draw Calls für alle Läden
+function floorAtlas() {
+  const [c, g] = canvas(1536, 1024, 1), r = rng(5), cell = (cx, cy, f) => { g.save(); g.translate(cx * 512, cy * 512); g.beginPath(); g.rect(0, 0, 512, 512); g.clip(); f(); g.restore(); };
+  cell(0, 0, () => { g.fillStyle = '#d9dcdc'; g.fillRect(0, 0, 512, 512); for (let x = 0; x < 512; x += 64) for (let y = 0; y < 512; y += 64) { g.fillStyle = `hsl(200,6%,${82 + r() * 8}%)`; g.fillRect(x + 2, y + 2, 60, 60); } });
+  cell(1, 0, () => { for (let x = 0; x < 8; x++) for (let y = 0; y < 8; y++) { g.fillStyle = (x + y) % 2 ? '#1d1d1f' : '#eeeae2'; g.fillRect(x * 64, y * 64, 64, 64); } });
+  cell(2, 0, () => { for (let y = 0; y < 512; y += 32) for (let x = -((y / 32) % 3) * 70; x < 512; x += 210) { g.fillStyle = `hsl(28,${38 + r() * 12}%,${30 + r() * 12}%)`; g.fillRect(x, y, 208, 31); g.fillStyle = 'rgba(0,0,0,.25)'; g.fillRect(x, y + 30, 208, 2); } });
+  cell(0, 1, () => { g.fillStyle = '#8c8c88'; g.fillRect(0, 0, 512, 512); noise(g, 512, 512, r, 0.12, 9000); g.fillStyle = 'rgba(40,40,38,.35)'; g.fillRect(0, 255, 512, 3); g.fillRect(255, 0, 3, 512); });
+  cell(1, 1, () => { for (let x = 0; x < 2; x++) for (let y = 0; y < 2; y++) { g.fillStyle = `hsl(35,12%,${84 + r() * 6}%)`; g.fillRect(x * 256 + 2, y * 256 + 2, 252, 252); for (let k = 0; k < 9; k++) { g.strokeStyle = 'rgba(120,110,100,.18)'; g.lineWidth = 2; g.beginPath(); g.moveTo(x * 256 + r() * 256, y * 256); g.bezierCurveTo(x * 256 + r() * 256, y * 256 + 90, x * 256 + r() * 256, y * 256 + 170, x * 256 + r() * 256, y * 256 + 256); g.stroke(); } } });
+  cell(2, 1, () => { g.fillStyle = '#5b3f4a'; g.fillRect(0, 0, 512, 512); noise(g, 512, 512, r, 0.1, 12000); });
+  return texture(c);
+}
+function goodsAtlas() {
+  const [c, g] = canvas(1536, 1024, 1), r = rng(9), cell = (cx, cy, f) => { g.save(); g.translate(cx * 512, cy * 512); g.beginPath(); g.rect(0, 0, 512, 512); g.clip(); f(); g.restore(); };
+  const hue = () => [0, 30, 50, 120, 200, 280, 330][Math.floor(r() * 7)];
+  cell(0, 0, () => { g.fillStyle = '#c9cdd2'; g.fillRect(0, 0, 512, 512); // Regal mit Packungen in 5 Böden
+    for (let row = 0; row < 5; row++) { const y = row * 102; g.fillStyle = '#8a9099'; g.fillRect(0, y + 94, 512, 8);
+      for (let x = 4; x < 508;) { const w = 18 + r() * 30, h = 40 + r() * 46, H = hue(); g.fillStyle = `hsl(${H},${55 + r() * 30}%,${40 + r() * 25}%)`; g.fillRect(x, y + 94 - h, w - 3, h); g.fillStyle = 'rgba(255,255,255,.55)'; g.fillRect(x + 3, y + 94 - h * 0.7, w - 9, h * 0.18); x += w; } } });
+  cell(1, 0, () => { g.fillStyle = '#e8f4ff'; g.fillRect(0, 0, 512, 512); // Kühlregal: Flaschen hinter Glas
+    for (let row = 0; row < 4; row++) for (let x = 6; x < 506; x += 22) { const H = hue(), y = row * 128; g.fillStyle = `hsl(${H},70%,45%)`; g.fillRect(x, y + 50, 16, 70); g.fillRect(x + 5, y + 34, 6, 18); }
+    g.fillStyle = 'rgba(160,200,230,.35)'; g.fillRect(0, 0, 512, 512); g.fillStyle = '#9aa4ad'; for (let x = 0; x < 512; x += 128) g.fillRect(x, 0, 6, 512); });
+  cell(2, 0, () => { g.fillStyle = '#2a1a12'; g.fillRect(0, 0, 512, 512); // Bar-Rückwand mit Flaschen
+    for (let row = 0; row < 4; row++) { g.fillStyle = '#6b4a30'; g.fillRect(0, row * 128 + 118, 512, 10);
+      for (let x = 6; x < 506; x += 24) { const H = [30, 45, 100, 0, 200][Math.floor(r() * 5)]; g.fillStyle = `hsla(${H},60%,${35 + r() * 25}%,.95)`; g.fillRect(x, row * 128 + 50, 16, 68); g.fillRect(x + 5, row * 128 + 30, 6, 22); } } });
+  cell(0, 1, () => { g.fillStyle = '#3c4034'; g.fillRect(0, 0, 512, 512); g.fillStyle = 'rgba(0,0,0,.25)'; for (let x = 0; x < 512; x += 16) g.fillRect(x, 0, 2, 512); // Lochwand mit Waffen
+    const t = Object.assign(document.createElement('canvas'), { width: 220, height: 80 });
+    for (let k = 0; k < 8; k++) { t.getContext('2d').clearRect(0, 0, 220, 80); gunIcon(k % 4, t); g.globalAlpha = 0.92; g.filter = 'brightness(0.18)'; g.drawImage(t, 30 + (k % 2) * 250, 20 + Math.floor(k / 2) * 122, 200, 72); g.filter = 'none'; g.globalAlpha = 1; } });
+  cell(1, 1, () => { g.fillStyle = '#c8c3ba'; g.fillRect(0, 0, 512, 512); for (const x of [40, 280]) { g.fillStyle = '#a9adb1'; g.fillRect(x, 60, 200, 452); g.fillStyle = '#8d9196'; g.fillRect(x + 98, 60, 4, 452); } g.fillStyle = '#ffb347'; g.fillRect(236, 24, 40, 14); });
+  cell(2, 1, () => { g.fillStyle = '#ece8e2'; g.fillRect(0, 0, 512, 512); g.fillStyle = '#777'; g.fillRect(0, 40, 512, 8); // Kleiderstange
+    for (let x = 4; x < 508; x += 26) { const H = hue(); g.fillStyle = `hsl(${H},${30 + r() * 50}%,${35 + r() * 35}%)`; g.beginPath(); g.moveTo(x, 50); g.lineTo(x + 24, 50); g.lineTo(x + 28, 360 + r() * 100); g.lineTo(x - 4, 360 + r() * 100); g.fill(); } });
+  return texture(c);
+}
+// Farben je Laden: Wand unten, Wand oben, Decke, Bodenfeld [x, y]
+const ROOMS = { markt: [0x9aa3ad, 0xf0f0ec, 0xf4f4f4, [0, 0]], imbiss: [0xc23b3b, 0xf6e6c8, 0xf2efe8, [1, 0]], bar: [0x3b2418, 0x5a2e2a, 0x231d1d, [2, 0]],
+  mode: [0xdedad3, 0xf7f5f0, 0xffffff, [2, 1]], waffen: [0x4b5040, 0xb9b8ae, 0xd8d8d0, [0, 1]], lobby: [0x8c7b66, 0xe8e0d0, 0xf5f0e6, [1, 1]] };
+
 // sammelt Vierecke für ein Material
 class Part {
   constructor() { this.p = []; this.n = []; this.uv = []; this.c = []; this.i = []; }
@@ -194,8 +231,13 @@ class Part {
     this.i.push(k, k + 1, k + 2, k, k + 2, k + 3);
   }
   // vier Wände eines Quaders mit Kachel-UVs: nu/nw = Texturkacheln entlang x/z, v0..v1 in der Höhe
-  walls(m, hw, hd, y0, y1, nu, nw, v0, v1, col, u0 = 0) {
-    this.quad(m, [[-hw, y0, hd], [hw, y0, hd], [hw, y1, hd], [-hw, y1, hd]], u0, v0, u0 + nu, v1, col);
+  walls(m, hw, hd, y0, y1, nu, nw, v0, v1, col, u0 = 0, door = 0) {
+    if (door) { // Vorderseite mit Türöffnung (Breite 2*door, Höhe DOOR_H): links, rechts, Sturz
+      const u = (x) => u0 + nu * (x + hw) / (2 * hw), vd = v0 + (v1 - v0) * (DOOR_H - y0) / (y1 - y0);
+      this.quad(m, [[-hw, y0, hd], [-door, y0, hd], [-door, y1, hd], [-hw, y1, hd]], u0, v0, u(-door), v1, col);
+      this.quad(m, [[door, y0, hd], [hw, y0, hd], [hw, y1, hd], [door, y1, hd]], u(door), v0, u0 + nu, v1, col);
+      this.quad(m, [[-door, DOOR_H, hd], [door, DOOR_H, hd], [door, y1, hd], [-door, y1, hd]], u(-door), vd, u(door), v1, col);
+    } else this.quad(m, [[-hw, y0, hd], [hw, y0, hd], [hw, y1, hd], [-hw, y1, hd]], u0, v0, u0 + nu, v1, col);
     this.quad(m, [[hw, y0, -hd], [-hw, y0, -hd], [-hw, y1, -hd], [hw, y1, -hd]], u0, v0, u0 + nu, v1, col);
     this.quad(m, [[hw, y0, hd], [hw, y0, -hd], [hw, y1, -hd], [hw, y1, hd]], u0, v0, u0 + nw, v1, col);
     this.quad(m, [[-hw, y0, -hd], [-hw, y0, hd], [-hw, y1, hd], [-hw, y1, -hd]], u0, v0, u0 + nw, v1, col);
@@ -208,6 +250,26 @@ class Part {
     this.quad(m, [[x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]], 0, 0, 0, 0, col);
     this.quad(m, [[x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0]], 0, 0, 0, 0, top);
     this.quad(m, [[x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1]], 0, 0, 0, 0, col);
+  }
+  // Innenraum (Flächen zeigen nach innen): Wände unten/oben zweifarbig, Decke; vorn Türöffnung
+  inner(m, ix, iz, y1, low, high, ceil, door) {
+    for (const [a, b, col] of [[0, 1.1, low], [1.1, y1, high]]) {
+      this.quad(m, [[-ix, a, -iz], [ix, a, -iz], [ix, b, -iz], [-ix, b, -iz]], 0, 0, 0, 0, col);
+      this.quad(m, [[-ix, a, iz], [-ix, a, -iz], [-ix, b, -iz], [-ix, b, iz]], 0, 0, 0, 0, col);
+      this.quad(m, [[ix, a, -iz], [ix, a, iz], [ix, b, iz], [ix, b, -iz]], 0, 0, 0, 0, col);
+      this.quad(m, [[ix, a, iz], [door, a, iz], [door, b, iz], [ix, b, iz]], 0, 0, 0, 0, col);
+      this.quad(m, [[-door, a, iz], [-ix, a, iz], [-ix, b, iz], [-door, b, iz]], 0, 0, 0, 0, col);
+    }
+    this.quad(m, [[door, DOOR_H, iz], [-door, DOOR_H, iz], [-door, y1, iz], [door, y1, iz]], 0, 0, 0, 0, high);
+    this.quad(m, [[-ix, y1, -iz], [ix, y1, -iz], [ix, y1, iz], [-ix, y1, iz]], 0, 0, 0, 0, ceil);
+  }
+  // Fläche mit einem Atlasfeld (cx, cy in 3 x 2 Feldern), in Stücke von höchstens L m geteilt; a/b = Ecken, Normale nach dir
+  tiled(m, x0, x1, y0, y1, z, cx, cy, face, L = 2.2) {
+    const n = Math.max(1, Math.round(Math.abs(x1 - x0) / L)), W = new THREE.Color(1, 1, 1), u0 = cx / 3, v0 = 1 - (cy + 1) / 2;
+    for (let k = 0; k < n; k++) {
+      const a = x0 + (x1 - x0) * k / n, b = x0 + (x1 - x0) * (k + 1) / n;
+      this.quad(m, face(a, b, y0, y1, z), u0, v0, u0 + 1 / 3, v0 + 0.5, W);
+    }
   }
   // stehendes n-Eck (Wassertank, Rohr); Deckel als Dreiecksfächer
   prism(m, cx, cz, rad, y0, y1, n, col, top = col) {
@@ -236,6 +298,43 @@ export function makeBuildings(city, baseY, hi = false) {
   const heights = [], neon = [], m = new THREE.Matrix4(), q = new THREE.Quaternion(), UP = new THREE.Vector3(0, 1, 0), ONE = new THREE.Vector3(1, 1, 1);
   const WHITE = new THREE.Color(0xf7f5f0), DARK = new THREE.Color(0x3a444e), UNIT = new THREE.Color(0x9a9da2), RAIL = new THREE.Color(0xb9cdd6);
   const ROOFS = [0x74777c, 0x5b5e63, 0x8a857a, 0x4a4c50].map(c => new THREE.Color(c)), STONE = new THREE.Color(0xd9d1c1), IRON = new THREE.Color(0x2c2f33), WOOD = new THREE.Color(0x7b5b40), WOODTOP = new THREE.Color(0x4f3b2a);
+  const chunks = {}, C = (h) => new THREE.Color(h), FRAME = C(0x2a2d31); // Innenräume je Stadt-Kachel (62 m): nur nahe werden gezeichnet
+  // Laden einrichten: Türrahmen, Hülle, Boden, Möbel aus city (b.items), Deckenleuchten
+  function furnish(b, m, hw, hd) {
+    const [low, high, ceil, [fx, fy]] = ROOMS[b.room], ix = hw - WALL_T, iz = hd - WALL_T, y1 = GH - 0.3;
+    const key = Math.round(b.x / 62) + ',' + Math.round(b.z / 62), R = chunks[key] ||= { x: 0, z: 0, n: 0, inner: new Part(), floor: new Part(), goods: new Part(), lights: new Part() };
+    R.x += b.x; R.z += b.z; R.n++;
+    for (const sx of [-1, 1]) P.plain.box(m, sx < 0 ? -DOOR - 0.14 : DOOR, sx < 0 ? -DOOR : DOOR + 0.14, 0, DOOR_H + 0.14, hd - WALL_T - 0.02, hd + 0.05, FRAME);
+    P.plain.box(m, -DOOR, DOOR, DOOR_H, DOOR_H + 0.14, hd - WALL_T - 0.02, hd + 0.05, FRAME);
+    R.inner.inner(m, ix, iz, y1, C(low), C(high), C(ceil), DOOR);
+    const W = new THREE.Color(1, 1, 1), n = Math.max(1, Math.round(2 * ix / 4)), k = Math.max(1, Math.round(2 * iz / 4));
+    for (let a = 0; a < n; a++) for (let c = 0; c < k; c++) { // Boden in ~4-m-Kacheln, jede zeigt das ganze Atlasfeld
+      const x0 = -ix + 2 * ix * a / n, x1 = -ix + 2 * ix * (a + 1) / n, z0 = -iz + 2 * iz * c / k, z1 = -iz + 2 * iz * (c + 1) / k;
+      R.floor.quad(m, [[x0, 0.035, z1], [x1, 0.035, z1], [x1, 0.035, z0], [x0, 0.035, z0]], fx / 3, 1 - (fy + 1) / 2, (fx + 1) / 3, 1 - fy / 2, W);
+      const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2, L = 0.65; // Deckenleuchte, zeigt nach unten
+      R.lights.quad(m, [[cx - L, y1 - 0.02, cz - L], [cx + L, y1 - 0.02, cz - L], [cx + L, y1 - 0.02, cz + L], [cx - L, y1 - 0.02, cz + L]], 0, 0, 0, 0, W);
+    }
+    const box = (x, z, w, d, y0, y1c, col) => R.inner.box(m, x - w / 2, x + w / 2, y0, y1c, z - d / 2, z + d / 2, col);
+    const faceX = (sx) => (a, b2, y0, yy, x) => sx > 0 ? [[x, y0, b2], [x, y0, a], [x, yy, a], [x, yy, b2]] : [[x, y0, a], [x, y0, b2], [x, yy, b2], [x, yy, a]]; // Normale +x / -x
+    const faceZ = (sz) => (a, b2, y0, yy, z) => sz > 0 ? [[a, y0, z], [b2, y0, z], [b2, yy, z], [a, yy, z]] : [[b2, y0, z], [a, y0, z], [a, yy, z], [b2, yy, z]]; // Normale +z / -z
+    for (const [kind, x, z, w, d, h] of b.items) {
+      if (kind === 'counter' || kind === 'bar' || kind === 'desk') { box(x, z, w, d, 0, h - 0.06, C(kind === 'bar' ? 0x4a2c1a : kind === 'desk' ? 0xd8d2c6 : 0xe6e6e2)); box(x, z, w + 0.1, d + 0.1, h - 0.06, h, C(kind === 'bar' ? 0x2a1a10 : 0x9b9b98)); }
+      else if (kind === 'glass') { box(x, z, w, d, 0, 0.75, C(0x24282d)); box(x, z, w, d, 0.75, h, C(0xbfd8e6)); }
+      else if (kind === 'shelf' || kind === 'rack') {
+        const alongZ = d > w, cell = b.room === 'waffen' ? [0, 1] : kind === 'rack' ? [2, 1] : [0, 0];
+        box(x, z, w * 0.9, d * 0.9, 0, h, C(0x8a9099));
+        if (alongZ) for (const sx of [-1, 1]) R.goods.tiled(m, z - d / 2, z + d / 2, 0.05, h - 0.05, x + sx * w / 2, ...cell, faceX(sx));
+        else for (const sz of [-1, 1]) R.goods.tiled(m, x - w / 2, x + w / 2, 0.05, h - 0.05, z + sz * d / 2, ...cell, faceZ(sz));
+      }
+      else if (kind === 'fridge') { box(x, z, w, d, 0, h, C(0xf2f2f2)); R.goods.tiled(m, x - w / 2 + 0.1, x + w / 2 - 0.1, 0.15, h - 0.2, z + d / 2 + 0.01, 1, 0, faceZ(1)); }
+      else if (kind === 'backbar') { box(x, z, w, d, 0, h, C(0x2a1a12)); R.goods.tiled(m, z - d / 2, z + d / 2, 0.9, h - 0.1, x - w / 2 - 0.01, 2, 0, faceX(-1)); }
+      else if (kind === 'gunwall' || kind === 'lift') { box(x, z, w, d, 0, h, C(kind === 'lift' ? 0x8c8f93 : 0x3c4034)); R.goods.tiled(m, x - w / 2, x + w / 2, kind === 'lift' ? 0 : 0.6, h, z + d / 2 + 0.01, kind === 'lift' ? 1 : 0, 1, faceZ(1), kind === 'lift' ? 2.6 : 2.4); }
+      else if (kind === 'booth') { const back = b.items.some(q => q[0] === 'table' && Math.abs(q[1] - x) < 0.1 && q[2] > z) ? -1 : 1; box(x, z, w, d, 0, 0.48, C(0xb3262b)); box(x, z + back * d * 0.32, w, d * 0.36, 0.48, h, C(0x8f1d22)); }
+      else if (kind === 'sofa') { const back = x > 0 ? 1 : -1; box(x, z, w, d, 0, 0.45, C(0x5a6470)); box(x + back * w * 0.35, z, w * 0.3, d, 0.45, h, C(0x4b545e)); }
+      else if (kind === 'table') { box(x, z, 0.12, 0.12, 0, h - 0.05, C(0x2c2c2c)); if (b.room === 'bar' || b.room === 'lobby') R.inner.prism(m, x, z, w / 2, h - 0.05, h, 16, C(0x5b3a24)); else box(x, z, w, d, h - 0.05, h, C(0xe8e3d8)); }
+      else if (kind === 'stool') { box(x, z, 0.08, 0.08, 0, h - 0.08, C(0xb0b4b8)); R.inner.prism(m, x, z, 0.22, h - 0.08, h, 10, C(b.room === 'bar' ? 0x6a1f1f : 0xc0302f)); }
+    }
+  }
   for (const b of city.buildings) {
     const { style, floors } = b, top = GH + (floors - 1) * FH, tower = floors >= 18;
     // Büro- und Glastürme springen im oberen Drittel zurück (schlankere Silhouette); unten volle Grundfläche
@@ -245,7 +344,8 @@ export function makeBuildings(city, baseY, hi = false) {
     const tint = new THREE.Color(pick(TINT[style])), trim = style === 'glass' ? DARK : style === 'brick' ? STONE : WHITE, col = pick(NEON), ROOF = pick(ROOFS), fs = style === 'hotel' ? 'condo' : style;
     m.compose(new THREE.Vector3(b.x, baseY, b.z), q.setFromAxisAngle(UP, b.rot), ONE);
     const glow = (x, y, z, sx, sy, sz, c = col) => neon.push([m.clone().multiply(new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion(), new THREE.Vector3(sx, sy, sz))), c]);
-    P.shop.walls(m, hw, hd, 0, GH, nx / 4, nz / 4, 0, 1, tint.clone().lerp(WHITE, 0.5), u0);
+    P.shop.walls(m, hw, hd, 0, GH, nx / 4, nz / 4, 0, 1, tint.clone().lerp(WHITE, 0.5), u0, b.room ? DOOR : 0);
+    if (b.room) furnish(b, m, hw, hd);
     P[fs].walls(m, hw, hd, GH, y1, nx / 4, nz / 4, 0, f1 / 4, tint, u0);
     if (back) {
       P.plain.box(m, -hw - 0.3, hw + 0.3, y1, y1 + 0.5, -hd - 0.3, hd + 0.3, trim, ROOF); // Terrasse auf dem Rücksprung
@@ -307,6 +407,10 @@ export function makeBuildings(city, baseY, hi = false) {
       P.plain.box(m, -hw + 0.5, hw - 0.5, y, y + 1.05, Math.min(z1, z1 - s * 0.06), Math.max(z1, z1 - s * 0.06), RAIL);
     }
   }
-  const mats = { deco: facade('deco', r), condo: facade('condo', r), office: facade('office', r), glass: facade('glass', r), brick: facade('brick', r), garage: facade('garage', r), shop: shopfront(r), plain: stdMat({ vertexColors: true, roughness: 0.85 }) };
-  return { meshes: Object.keys(P).filter(k => P[k].p.length).map(k => P[k].mesh(mats[k])), heights, neon, lit: Object.values(mats).filter(m => m.emissiveMap) };
+  const goods = goodsAtlas();
+  const mats = { deco: facade('deco', r), condo: facade('condo', r), office: facade('office', r), glass: facade('glass', r), brick: facade('brick', r), garage: facade('garage', r), shop: shopfront(r),
+    plain: stdMat({ vertexColors: true, roughness: 0.85 }), inner: stdMat({ vertexColors: true, roughness: 0.8, emissive: 0x303030 }), floor: stdMat({ map: floorAtlas(), roughness: 0.55 }), goods: stdMat({ map: goods, emissiveMap: goods, emissive: 0xffffff, emissiveIntensity: 0.3, roughness: 0.7 }) };
+  mats.lights = new THREE.MeshBasicMaterial({ color: 0xfff4e0 });
+  const rooms = Object.values(chunks).map(R => ({ x: R.x / R.n, z: R.z / R.n, meshes: ['inner', 'floor', 'goods', 'lights'].filter(k => R[k].p.length).map(k => { const me = R[k].mesh(mats[k]); me.castShadow = false; return me; }) }));
+  return { meshes: Object.keys(P).filter(k => P[k].p.length).map(k => P[k].mesh(mats[k])), heights, neon, rooms, lit: [mats.deco, mats.condo, mats.office, mats.glass, mats.brick, mats.garage, mats.shop] };
 }

@@ -30,19 +30,19 @@ export class Hud {
     g.fillStyle = '#1d3550'; g.fillRect(-HALF, RIVER.z0, SIZE, rh);
     for (const c of BRIDGES) { g.fillStyle = '#4b5056'; g.fillRect(c - BRIDGE_HALF, RIVER.z0, 2 * BRIDGE_HALF, rh); g.fillStyle = '#8a8f94'; g.fillRect(c - ROAD / 2, RIVER.z0, ROAD, rh); }
     g.fillStyle = '#e0b020'; for (const i of JUMPS) for (const z of [RIVER.z0 - 6, RIVER.z1 + 3]) g.fillRect(roadCenter(i) - ROAD / 2, z, ROAD, 3);
-    g.fillStyle = '#2e3136';
-    city.solids.slice(0, city.buildings.length).forEach(s => g.fillRect(s.x0, s.z0, s.x1 - s.x0, s.z1 - s.z0));
+    for (const b of city.buildings) { const s = b.fp; g.fillStyle = b.room ? '#3a3e46' : '#2e3136'; g.fillRect(s.x0, s.z0, s.x1 - s.x0, s.z1 - s.z0); } // Läden etwas heller
     return c;
   }
 
   // pos/yaw = ich; camYaw = Blickrichtung (zeigt auf der Karte nach oben); others = [{pos, color}]; cars = Fahrzeugliste
-  minimap(pos, yaw, camYaw, others, cars) {
+  minimap(pos, yaw, camYaw, others, cars, marks = []) {
     const g = this.g, W = g.canvas.width, H = g.canvas.height, cx = W / 2, cy = H * 0.66; // Spieler im unteren Drittel: mehr Sicht nach vorn
     const a = camYaw - Math.PI, ca = Math.cos(a), sa = Math.sin(a);
     g.setTransform(1, 0, 0, 1, 0, 0); g.fillStyle = '#2b3530'; g.fillRect(0, 0, W, H);
     g.translate(cx, cy); g.rotate(a); g.scale(ZOOM, ZOOM); g.translate(-pos.x, -pos.z);
     g.drawImage(this.bg, -HALF - PAD, -HALF - PAD);
     for (const v of cars) if (v?.driver) { g.fillStyle = '#d8dade'; g.fillRect(v.pos.x - 1.6, v.pos.z - 1.6, 3.2, 3.2); }
+    for (const m of marks) { g.beginPath(); g.arc(m.x, m.z, m.r, 0, 7); g.fillStyle = m.c; g.fill(); g.lineWidth = 1.2; g.strokeStyle = '#000'; g.stroke(); } // Waffenladen, Fundorte
     g.setTransform(1, 0, 0, 1, cx, cy);
     for (const o of others) { // Mitspieler außerhalb der Karte am Rand festhalten, damit man sich findet
       const x = clamp(((o.pos.x - pos.x) * ca - (o.pos.z - pos.z) * sa) * ZOOM, 7 - cx, W - cx - 7), y = clamp(((o.pos.x - pos.x) * sa + (o.pos.z - pos.z) * ca) * ZOOM, 7 - cy, H - cy - 7);

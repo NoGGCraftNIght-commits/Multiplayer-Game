@@ -96,6 +96,20 @@ summary { cursor: pointer; font-weight: 700; }
 .ebar.car { background: #1f3550; } .ebar.car i { background: #4c93d9; }
 #tr { position: absolute; top: max(14px, env(safe-area-inset-top)); right: max(18px, env(safe-area-inset-right)); display: grid; justify-items: end; gap: 2px; text-shadow: var(--sh); }
 #clock { font-size: 22px; font-weight: 500; letter-spacing: .04em; }
+#cash { font-size: 26px; font-weight: 600; color: #8fe08a; letter-spacing: .02em; }
+#cash.on { animation: cashPop .6s; }
+@keyframes cashPop { 0% { transform: scale(1.25); color: #fff; } 100% { transform: scale(1); } }
+#wheel div.locked { opacity: .35; }
+#wheel div small { font-size: 12px; color: #ffd23f; }
+/* Waffenladen: dunkles Menü links wie im Vorbild, Einträge mit Silhouette, Preis oder „gekauft“ */
+#shop { position: absolute; left: max(24px, env(safe-area-inset-left)); top: 50%; transform: translateY(-50%); width: min(360px, 86vw); pointer-events: auto;
+  background: rgba(8, 10, 14, .86); border-radius: 6px; padding: 0 0 10px; box-shadow: 0 12px 40px rgba(0,0,0,.5); font-family: var(--hud); }
+#shop h3 { margin: 0 0 6px; padding: 14px 16px; font-size: 26px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; background: linear-gradient(90deg, #b8432a, #7a2416); }
+#shopList button { display: grid; grid-template-columns: 92px 1fr auto; align-items: center; gap: 10px; width: 100%; border: 0; border-radius: 0; background: transparent; padding: 8px 16px; text-align: left; font-size: 18px; font-weight: 500; }
+#shopList button:hover, #shopList button:focus-visible { background: rgba(255,255,255,.12); }
+#shopList button[disabled] { opacity: .5; }
+#shopList b { color: #8fe08a; font-weight: 600; }
+#shop .note { padding: 6px 16px 0; color: #aab; }
 #weapon { display: flex; align-items: center; gap: 10px; }
 #wicon { width: 120px; height: 40px; filter: drop-shadow(0 1px 2px #000); }
 #ammo { font-size: 26px; font-weight: 500; min-width: 64px; text-align: right; }

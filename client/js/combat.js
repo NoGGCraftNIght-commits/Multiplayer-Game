@@ -10,6 +10,7 @@ const Z = new THREE.Vector3(0, 0, 1), _m = new THREE.Matrix4(), _q = new THREE.Q
 const SHAPE = { water: [0.05, 0.3], dart: [0.035, 0.22], confetti: [0.05, 0.05], paint: [0.15, 0.15] };
 const SOUND = { water: 1.5, dart: 0.9, confetti: 0.6, paint: 0.45 };
 
+const EMPTY = [];
 export class Combat {
   // env: { scene, city, heights, groundY(x,z), vehicles, audio, targets() -> [{t,id,x,y,z,me?}], onHit(target, weapon), onReload(weapon) }
   constructor(env) {
@@ -59,16 +60,31 @@ export class Combat {
   // Welt-Kollision eines Punktes: Normale oder null
   solidAt(x, y, z, n) {
     if (y < this.groundY(x, z, y)) return n.set(0, 1, 0);
-    const s = this.city.solids;
-    for (let i = 0; i < s.length; i++) {
+    const s = this.city.solids, cell = this.grid(x, z);
+    for (const i of cell) {
       const b = s[i];
-      if (x < b.x0 || x > b.x1 || z < b.z0 || z > b.z1 || y > this.heights[i]) continue;
+      if (x < b.x0 || x > b.x1 || z < b.z0 || z > b.z1 || y > this.heights[i] || y < (b.y0 || -9)) continue;
       const dx = Math.min(x - b.x0, b.x1 - x), dz = Math.min(z - b.z0, b.z1 - z), dy = this.heights[i] - y;
+      if (b.y0 && y - b.y0 < Math.min(dx, dz, dy)) return n.set(0, -1, 0); // Decke von unten
       if (dy < dx && dy < dz) return n.set(0, 1, 0);
       return dx < dz ? n.set(x - b.x0 < b.x1 - x ? -1 : 1, 0, 0) : n.set(0, 0, z - b.z0 < b.z1 - z ? -1 : 1);
     }
     if (y < 2.4) { const o = this.vehicles.pushOut(x, z, 0.05); if (o) return n.set(o[0], 0, o[1]).normalize(); }
     return null;
+  }
+
+  // Raster (16 m) über alle Hindernisse: jede Abfrage prüft nur die paar Rechtecke ihrer Zelle statt ~1500 (schont schwache CPUs)
+  grid(x, z) {
+    const G = 16, key = (a, b) => a * 4096 + b;
+    if (!this.cells || this.cellsFor !== this.city.solids) {
+      this.cells = new Map(); this.cellsFor = this.city.solids;
+      this.city.solids.forEach((b, i) => {
+        for (let a = Math.floor(b.x0 / G); a <= Math.floor(b.x1 / G); a++) for (let c = Math.floor(b.z0 / G); c <= Math.floor(b.z1 / G); c++) {
+          const k = key(a, c); (this.cells.get(k) || this.cells.set(k, []).get(k)).push(i);
+        }
+      });
+    }
+    return this.cells.get(key(Math.floor(x / G), Math.floor(z / G))) || EMPTY;
   }
 
   // Strahl in Schritten abtasten: Distanz bis zum ersten Hindernis (Zielpunkt, Kamera)
@@ -151,5 +167,7 @@ export function selfTest() {
   console.assert(c.solidAt(5, 7.9, 5, n).y === 1 && !c.solidAt(5, 9, 5, n) && c.solidAt(20, -0.1, 20, n).y === 1, 'Dach/Boden');
   console.assert(Math.abs(c.trace(new THREE.Vector3(-5, 1, 5), new THREE.Vector3(1, 0, 0), 50, 0.5) - 5) < 0.51, 'trace');
   console.assert(pushOut(c.city.solids, -0.2, 5, 0.4)[0] < 0, 'pushOut');
+  c.city.solids.push({ x0: 20, x1: 30, z0: 0, z1: 10, y0: 4 }); c.heights.push(9); c.cells = null; // Decke eines Ladens
+  console.assert(!c.solidAt(25, 2, 5, n) && c.solidAt(25, 4.2, 5, n).y === -1 && pushOut(c.city.solids, 25, 5, 0.4) === null, 'Decke: darunter frei');
   return true;
 }
