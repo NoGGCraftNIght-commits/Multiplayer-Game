@@ -15,6 +15,26 @@ const ramp = (u, from) => { const t = Math.min(1, Math.max(0, (u - from) / (1 - 
 const rnd = (a, b) => a + Math.random() * (b - a);
 const BURNT = new THREE.MeshStandardMaterial({ color: 0x141312, roughness: 1 }), HOLE = new THREE.MeshBasicMaterial({ color: 0x07080a });
 const GREY = [0.62, 0.62, 0.64], DARK = [0.07, 0.07, 0.07], FIRE = [3.2, 1.1, 0.18], EMBER = [2.4, 0.35, 0.05];
+// Kenney-Atlas (8 x 8 Farbfelder, alle Autos teilen ihn): je Feld Lack, Glas, Zierteile, Reifen oder Chrom
+const CELL_KIND = { '3,4': 'trim', '3,5': 'trim', '2,4': 'tire', '2,5': 'tire', '5,4': 'chrome', '5,5': 'chrome', '0,6': 'glass', '0,7': 'glass' }; // 'Spalte,Zeile'
+const KIND = { paint: [0.32, 0.15, 1, '#c4c4c4'], glass: [0.06, 0, 0.5, '#262d38'], trim: [0.45, 0.2, 0.4, '#7a7f88'], tire: [0.92, 0, 0, '#5a5a5a'], chrome: [0.12, 1, 0, '#ffffff'], light: [0.2, 0, 1, '#ffffff'] }; // Rauheit, Metall, Klarlack, Farbe (multipliziert)
+let CAR = null;
+function carMaterial(map) {
+  if (CAR) return CAR;
+  const img = map.image, n = img.width, s = n / 8, mk = () => Object.assign(document.createElement('canvas'), { width: n, height: n });
+  const col = mk(), rm = mk(), cc = mk(), g = col.getContext('2d'), gr = rm.getContext('2d'), gc = cc.getContext('2d');
+  g.drawImage(img, 0, 0); g.globalCompositeOperation = 'multiply';
+  for (let x = 0; x < 8; x++) for (let y = 0; y < 8; y++) {
+    const k = CELL_KIND[x + ',' + y] || (y >= 6 && x <= 2 ? 'light' : 'paint');
+    const [r, m, c, tint] = KIND[k];
+    gr.fillStyle = `rgb(0,${r * 255 | 0},${m * 255 | 0})`; gr.fillRect(x * s, y * s, s, s); // glTF-Art: Rauheit in Grün, Metall in Blau
+    gc.fillStyle = `rgb(${c * 255 | 0},0,0)`; gc.fillRect(x * s, y * s, s, s);
+    g.fillStyle = tint; g.fillRect(x * s, y * s, s, s); // Lack etwas tiefer, Glas dunkel getönt
+  }
+  const tex = (c, srgb) => Object.assign(new THREE.CanvasTexture(c), { flipY: map.flipY, colorSpace: srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace, anisotropy: 4 });
+  const rmT = tex(rm);
+  return CAR = new THREE.MeshPhysicalMaterial({ map: tex(col, true), roughnessMap: rmT, metalnessMap: rmT, clearcoatMap: tex(cc), clearcoat: 1, clearcoatRoughness: 0.06, roughness: 1, metalness: 1 });
+}
 const pixel = Object.assign(document.createElement('canvas'), { width: 1, height: 1 }).getContext('2d', { willReadFrequently: true });
 const SOFT = (() => { // weicher runder Tupfer für Rauch und Flammen
   const c = Object.assign(document.createElement('canvas'), { width: 64, height: 64 }), g = c.getContext('2d'), r = g.createRadialGradient(32, 32, 0, 32, 32, 32);
@@ -64,6 +84,9 @@ export class Vehicles {
     this.smoke = new Puffs(scene, 260, 1.7, false); this.fire = new Puffs(scene, 220, 1.0, true); this.debris = [];
     this.flash = new THREE.PointLight(0xff8a30, 0, 45); scene.add(this.flash); // von Anfang an in der Szene: kein Shader-Neubau beim ersten Knall
     this.onBoom = null; // (v) => Ton usw.
+    // weicher Schatten unter jedem Auto, ein Draw Call für alle (auf "Niedrig" der einzige Schatten)
+    this.blobs = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: SOFT, color: 0, transparent: true, opacity: 0.6, depthWrite: false }), 160);
+    this.blobs.frustumCulled = false; this.blobs.count = 0; scene.add(this.blobs);
   }
 
   // s = [id,x,y,z,qx,qy,qz,qw,steer,driver,typeIdx,traffic]
@@ -72,6 +95,7 @@ export class Vehicles {
     const cfg = VEHICLES[type];
     const model = assets.models[type].scene.clone(true);
     model.scale.copy(SCALE);
+    model.traverse(o => { if (o.isMesh && o.material.map) o.material = carMaterial(o.material.map); });
     const group = new THREE.Group(); group.add(model); this.scene.add(group);
     // Räder aus der gestreckten Karosserie lösen (sonst würden sie oval); das Reserverad am Heck zählt nicht
     const wheels = [];
@@ -189,6 +213,9 @@ export class Vehicles {
   // ---------- pro Frame ----------
   update(dt, renderT, night, eye) {
     const self = this.mine?.v;
+    let nb = 0;
+    for (const v of this.list) if (v && nb < 160) this.blobs.setMatrixAt(nb++, _m1.compose(_p.set(v.pos.x, v.pos.y + 0.04, v.pos.z), v.quat, _d.set((v.bb.max.x - v.bb.min.x) * 1.15, 1, (v.bb.max.z - v.bb.min.z) * 1.1)));
+    this.blobs.count = nb; this.blobs.instanceMatrix.needsUpdate = true;
     // fremde Fahrzeuge: interpolierte Pose -> Kinematik-Körper
     for (const v of this.list) {
       if (!v || v === self) continue;

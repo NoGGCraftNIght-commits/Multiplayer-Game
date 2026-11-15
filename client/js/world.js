@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
@@ -8,6 +7,7 @@ import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { assets } from './assets.js';
 import { makeBuildings } from './buildings.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { GRID, BLOCK, ROAD, CELL, SIZE, HALF, BEACH, blockMin, roadCenter } from './shared.js';
 
 export const SLAB = 0.14; // Gehweghöhe (Bordstein)
@@ -50,6 +50,11 @@ function canvasTex(kind, repeat) {
     noise('#4a4d55', 0.18, 26000, 2);
     g.strokeStyle = 'rgba(20,20,22,.35)'; g.lineWidth = 2;
     for (let i = 0; i < 8; i++) { g.beginPath(); let x = Math.random() * 512, y = Math.random() * 512; g.moveTo(x, y); for (let k = 0; k < 6; k++) { x += (Math.random() - .5) * 60; y += (Math.random() - .5) * 60; g.lineTo(x, y); } g.stroke(); }
+    for (let i = 0; i < 4; i++) { const v = Math.random() < 0.5 ? 18 : 120; g.fillStyle = `rgba(${v},${v},${v + 4},.1)`; g.fillRect(Math.random() * 400, Math.random() * 400, 40 + Math.random() * 110, 30 + Math.random() * 80); } // Flicken
+    for (let i = 0; i < 5; i++) { // Ölflecken
+      const x = Math.random() * 512, y = Math.random() * 512, r = 8 + Math.random() * 20, o = g.createRadialGradient(x, y, 0, x, y, r);
+      o.addColorStop(0, 'rgba(12,12,14,.32)'); o.addColorStop(1, 'rgba(12,12,14,0)'); g.fillStyle = o; g.fillRect(x - r, y - r, 2 * r, 2 * r);
+    }
   } else if (kind === 'sidewalk') {
     noise('#bdb8ae', 0.1, 9000, 2);
     g.strokeStyle = 'rgba(80,75,70,.45)'; g.lineWidth = 3;
@@ -66,6 +71,16 @@ function canvasTex(kind, repeat) {
   const t = new THREE.CanvasTexture(c);
   t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(repeat, repeat); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
   return t;
+}
+
+// Umgebung für Spiegelungen: oben Himmel, am Horizont hell, unten Straße und Häuser (statt eines Innenraums)
+function skyEnv(renderer) {
+  const c = document.createElement('canvas'); c.width = 8; c.height = 256;
+  const g = c.getContext('2d'), gr = g.createLinearGradient(0, 0, 0, 256);
+  for (const [t, col] of [[0, '#2f6fc4'], [0.38, '#8fbbe8'], [0.49, '#e4eef5'], [0.52, '#8a8d90'], [0.6, '#55585c'], [1, '#2a2b2e']]) gr.addColorStop(t, col);
+  g.fillStyle = gr; g.fillRect(0, 0, 8, 256);
+  const t = new THREE.CanvasTexture(c); t.mapping = THREE.EquirectangularReflectionMapping; t.colorSpace = THREE.SRGBColorSpace;
+  return new THREE.PMREMGenerator(renderer).fromEquirectangular(t).texture;
 }
 
 // kachelbare Wellen-Normalmap fürs Meer (Sonnenglitzern ohne Shader-Aufwand)
@@ -96,7 +111,7 @@ export class World {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(65, 1, 0.1, 1200);
-    this.scene.fog = new THREE.Fog(0xbcd6ef, 30, q.fog);
+    this.scene.fog = new THREE.Fog(0xbcd6ef, 18, q.fog); // früh einsetzender Dunst: Tiefe wie an einem feuchtwarmen Küstentag
 
     // Himmel + Licht
     this.sky = new Sky(); this.sky.scale.setScalar(4000); this.scene.add(this.sky);
@@ -110,7 +125,7 @@ export class World {
     this.scene.add(this.sun, this.sun.target);
     this.moon = new THREE.DirectionalLight(0x8aa6ff, 0.3); this.scene.add(this.moon);
     this.stars = this.makeStars(); this.scene.add(this.stars);
-    this.envTex = new THREE.PMREMGenerator(this.renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+    this.envTex = skyEnv(this.renderer);
 
     this.buildCity();
     this.applySettings(settings);
@@ -186,11 +201,24 @@ export class World {
     markMesh.receiveShadow = true; markMesh.computeBoundingSphere(); scene.add(markMesh);
 
     // Gebäude (prozedural, echter Maßstab) + Neon
-    const B = makeBuildings(city, SLAB);
+    const B = makeBuildings(city, SLAB, this.settings.quality !== 'low');
     scene.add(...B.meshes);
     this.litMats = B.lit;
     this.heights = B.heights; // gleiche Reihenfolge wie city.solids: erst Gebäude, dann feste Bäume
     this.neonMat = new THREE.MeshBasicMaterial({ toneMapped: false });
+    // Ampeln an den Kreuzungen (nur Optik): Mast mit Ausleger über die Fahrbahn, Lampen leuchten über das Neon-Mesh
+    {
+      const pole = new THREE.CylinderGeometry(0.1, 0.13, 6, 6).translate(0, 3, 0), arm = new THREE.BoxGeometry(5.6, 0.14, 0.14).translate(-2.8, 5.85, 0);
+      const box = new THREE.BoxGeometry(0.36, 1.05, 0.34).translate(-4.9, 5.25, 0), signals = [];
+      const signalMesh = new THREE.InstancedMesh(mergeGeometries([pole, arm, box].map(g => g.toNonIndexed())), new THREE.MeshStandardMaterial({ color: 0x23262b, roughness: 0.55, metalness: 0.6 }), city.blocks.length * 2);
+      city.blocks.forEach((b, i) => [[b.x0 + 0.7, b.z0 + 0.7, 0], [b.x1 - 0.7, b.z1 - 0.7, Math.PI]].forEach(([x, z, a], k) => {
+        const at = new THREE.Matrix4().compose(tmpP.set(x, SLAB, z), tmpQ.setFromAxisAngle(Y, a), tmpS.set(1, 1, 1)), red = (i + k) % 2;
+        signalMesh.setMatrixAt(i * 2 + k, at);
+        for (const side of [-1, 1]) signals.push([at.clone().multiply(new THREE.Matrix4().compose(tmpP.set(-4.9, 5.25 + (red ? 0.3 : -0.3), side * 0.18), tmpQ.identity(), tmpS.set(0.2, 0.2, 0.03))), red ? 0xff2a1a : 0x2aff6a]);
+      }));
+      signalMesh.castShadow = true; signalMesh.computeBoundingSphere(); scene.add(signalMesh);
+      B.neon.push(...signals);
+    }
     const neonMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), this.neonMat, B.neon.length), col = new THREE.Color();
     B.neon.forEach(([m, c], i) => { neonMesh.setMatrixAt(i, m); neonMesh.setColorAt(i, col.set(c)); });
     neonMesh.computeBoundingSphere(); scene.add(neonMesh);
@@ -261,7 +289,7 @@ export class World {
     if (q.shadows) { this.sun.shadow.mapSize.set(q.shadows, q.shadows); this.sun.shadow.map?.dispose(); this.sun.shadow.map = null; }
     this.scene.fog.far = q.fog;
     this.camera.far = q.fog + 200; this.camera.updateProjectionMatrix();
-    this.scene.environment = real ? this.envTex : null;
+    this.scene.environment = this.envTex; // auch im Low-Poly-Stil: Autolack und Glas brauchen etwas zum Spiegeln
     for (const k of ['asphalt', 'sidewalk', 'grass', 'plaza', 'sand']) {
       const m = this.mats[k];
       m.map = real ? this.tex[k] : null;
@@ -307,7 +335,7 @@ export class World {
     this.night = dark;
     // Der Himmel-Shader ist sehr hell: niedrige Belichtung, dafür kräftige Lichter
     this.sun.intensity = 5.5 * day;
-    this.sun.color.setHSL(0.09, 0.6 * dusk + 0.1, 0.55 + 0.4 * (1 - dusk));
+    this.sun.color.setHSL(0.09, 0.6 * dusk + 0.25, 0.55 + 0.38 * (1 - dusk)); // auch mittags leicht warm
     this.sun.position.copy(focus).addScaledVector(dir.y > 0 ? dir : dir.clone().negate(), 150);
     this.sun.target.position.copy(focus);
     this.moon.intensity = 1.1 * dark;

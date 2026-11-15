@@ -22,12 +22,30 @@ const LIT = {
   glass: [[[0.02, 0.02, 0.47, 0.72], [0.51, 0.02, 0.47, 0.72]], 0.33, ['#eaf4ff', '#ffe9c4', '#d6ecff']],
 };
 
-function canvas(w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; return [c, c.getContext('2d')]; }
+let K = 1, RM = null; // K = Texturauflösung (2 auf mittel/hoch); RM = Rauheit/Metall-Leinwand der gerade gezeichneten Fassade
+const GLOSS = 'rgb(0,18,150)', MATT = 'rgb(0,230,0)'; // glTF-Art: Rauheit in Grün, Metall in Blau
+// Leinwand in logischen Pixeln (PX je Fensterachse), intern K-fach aufgelöst
+function canvas(w, h, k = K) { const c = document.createElement('canvas'); c.width = w * k; c.height = h * k; const g = c.getContext('2d'); g.scale(k, k); return [c, g]; }
 
-function texture(c, repeat = 1) {
+function texture(c, repeat = 1, srgb = true) {
   const t = new THREE.CanvasTexture(c);
-  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; t.repeat.set(repeat, repeat);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace; t.anisotropy = 8; t.repeat.set(repeat, repeat);
   return t;
+}
+
+// Material mit Farbe, Nachtlicht und glatten, spiegelnden Scheiben
+function facadeMat(c, rc, ec, emissiveRepeat) {
+  const rm = texture(rc, 1, false);
+  return new THREE.MeshStandardMaterial({ map: texture(c), roughnessMap: rm, metalnessMap: rm, roughness: 1, metalness: 1, emissiveMap: texture(ec, emissiveRepeat), emissive: 0xffffff, emissiveIntensity: 0, vertexColors: true });
+}
+
+// Schmutzschlieren unter Simsen und Fenstern: Fassaden wirken bewohnt statt frisch gerendert
+function grime(g, w, h, r, n) {
+  for (let i = 0; i < n; i++) {
+    const x = r() * w, y = r() * h, l = 18 + r() * 70, gr = g.createLinearGradient(0, y, 0, y + l);
+    gr.addColorStop(0, 'rgba(45,38,30,.13)'); gr.addColorStop(1, 'rgba(45,38,30,0)');
+    g.fillStyle = gr; g.fillRect(x, y, 2 + r() * 6, l);
+  }
 }
 
 // Scheibe: Verlauf (oben spiegelt der Himmel) + schräger Lichtstreifen
@@ -38,6 +56,7 @@ function glass(g, x, y, w, h, top, bottom, r) {
   const o = x + w * (0.25 + r() * 0.6);
   g.fillStyle = 'rgba(255,255,255,.12)'; g.beginPath(); g.moveTo(o, y); g.lineTo(o + w * 0.2, y); g.lineTo(o + w * 0.2 - h * 0.45, y + h); g.lineTo(o - h * 0.45, y + h); g.fill();
   g.restore();
+  if (RM) { RM.fillStyle = GLOSS; RM.fillRect(x, y, w, h); }
 }
 
 function noise(g, w, h, r, amount, n) { // Putz-Körnung
@@ -80,25 +99,29 @@ const CELL = {
 
 // Fassade: Farbtextur 4x4 Zellen, Leuchttextur 8x8 Zellen (halbe Wiederholung -> Muster wiederholt sich erst nach 8 Geschossen)
 function facade(style, r) {
-  const [c, g] = canvas(PX * 4, PX * 4), [ec, e] = canvas(256, 256), [rects, share, lights] = LIT[style];
-  g.fillStyle = style === 'office' ? '#d2d2d2' : '#dedede'; g.fillRect(0, 0, c.width, c.height);
-  if (style !== 'glass') noise(g, c.width, c.height, r, 0.07, 9000);
+  const S = PX * 4, [c, g] = canvas(S, S), [rc, rg] = canvas(S, S, 1), [ec, e] = canvas(256, 256, 1), [rects, share, lights] = LIT[style];
+  rg.fillStyle = MATT; rg.fillRect(0, 0, S, S); RM = rg;
+  g.fillStyle = style === 'office' ? '#d2d2d2' : '#dedede'; g.fillRect(0, 0, S, S);
+  if (style !== 'glass') noise(g, S, S, r, 0.07, 9000 * K);
   for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) {
     CELL[style](g, i * PX, j * PX, r);
     if (style === 'deco') { const sh = g.createLinearGradient(0, j * PX, 0, j * PX + 14); sh.addColorStop(0, 'rgba(0,0,0,.24)'); sh.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = sh; g.fillRect(i * PX, j * PX, PX, 14); } // Schatten unterm Sims
   }
+  RM = null;
+  if (style !== 'glass') grime(g, S, S, r, 60);
   e.fillStyle = '#000'; e.fillRect(0, 0, 256, 256);
   for (let i = 0; i < 8; i++) for (let j = 0; j < 8; j++) for (const [x, y, w, h] of rects) {
     if (r() > share) continue;
     e.globalAlpha = 0.45 + r() * 0.55; e.fillStyle = lights[Math.floor(r() * lights.length)];
     e.fillRect((i + x) * 32, (j + y) * 32, w * 32, h * 32);
   }
-  return new THREE.MeshStandardMaterial({ map: texture(c), emissiveMap: texture(ec, 0.5), emissive: 0xffffff, emissiveIntensity: 0, vertexColors: true, roughness: style === 'glass' ? 0.22 : 0.88 });
+  return facadeMat(c, rc, ec, 0.5);
 }
 
 // Erdgeschoss: 4 Achsen mit Schaufenstern, Tür, Markisen und Ladenschildern (Schilder leuchten nachts in Neonfarben)
 function shopfront(r) {
-  const W = PX * 4, H = 256, m = H / GH, [c, g] = canvas(W, H), [ec, e] = canvas(W, H);
+  const W = PX * 4, H = 256, m = H / GH, [c, g] = canvas(W, H), [rc, rg] = canvas(W, H, 1), [ec, e] = canvas(W, H, 1);
+  rg.fillStyle = MATT; rg.fillRect(0, 0, W, H); RM = rg;
   g.fillStyle = '#d6d6d6'; g.fillRect(0, 0, W, H); noise(g, W, H, r, 0.06, 4000);
   g.fillStyle = '#7f7f7f'; g.fillRect(0, H - 0.35 * m, W, 0.35 * m); // Sockel
   e.fillStyle = '#000'; e.fillRect(0, 0, W, H);
@@ -123,7 +146,10 @@ function shopfront(r) {
       x += lw + 3 + (r() < 0.2 ? 8 : 0);
     }
   }
-  return new THREE.MeshStandardMaterial({ map: texture(c), emissiveMap: texture(ec), emissive: 0xffffff, emissiveIntensity: 0, vertexColors: true, roughness: 0.8 });
+  RM = null;
+  const dirt = g.createLinearGradient(0, H - 0.9 * m, 0, H); dirt.addColorStop(0, 'rgba(35,30,25,0)'); dirt.addColorStop(1, 'rgba(35,30,25,.4)'); // Spritzwasser-Schmutz am Sockel
+  g.fillStyle = dirt; g.fillRect(0, H - 0.9 * m, W, 0.9 * m);
+  return facadeMat(c, rc, ec, 1);
 }
 
 // sammelt Vierecke für ein Material
@@ -164,19 +190,30 @@ class Part {
 }
 
 // liefert { meshes, heights (wie city.buildings), neon: [[Matrix4, Farbe]], lit: Materialien mit Nachtbeleuchtung }
-export function makeBuildings(city, baseY) {
+// hi = schärfere Fassaden (doppelte Auflösung) für mittlere und hohe Qualität
+export function makeBuildings(city, baseY, hi = false) {
+  K = hi ? 2 : 1;
   const r = rng(city.seed + 7), pick = (a) => a[Math.floor(r() * a.length)];
   const P = { deco: new Part(), condo: new Part(), office: new Part(), glass: new Part(), shop: new Part(), plain: new Part() };
   const heights = [], neon = [], m = new THREE.Matrix4(), q = new THREE.Quaternion(), UP = new THREE.Vector3(0, 1, 0), ONE = new THREE.Vector3(1, 1, 1);
   const WHITE = new THREE.Color(0xf7f5f0), DARK = new THREE.Color(0x3a444e), ROOF = new THREE.Color(0x74777c), UNIT = new THREE.Color(0x9a9da2), RAIL = new THREE.Color(0xb9cdd6);
   for (const b of city.buildings) {
-    const { w, d, style, floors } = b, hw = w / 2, hd = d / 2, top = GH + (floors - 1) * FH, tower = floors >= 18;
+    const { style, floors } = b, top = GH + (floors - 1) * FH, tower = floors >= 18;
+    // Büro- und Glastürme springen im oberen Drittel zurück (schlankere Silhouette); unten volle Grundfläche
+    const back = tower && (style === 'office' || style === 'glass'), f1 = back ? Math.round((floors - 1) * 0.68) : floors - 1, y1 = GH + f1 * FH, sb = back ? 0.76 : 1;
+    let w = b.w, d = b.d, hw = w / 2, hd = d / 2;
     const nx = Math.max(1, Math.round(w / BAY)), nz = Math.max(1, Math.round(d / BAY)), u0 = Math.floor(r() * 4) / 4;
     const tint = new THREE.Color(pick(TINT[style])), trim = style === 'glass' ? DARK : WHITE, col = pick(NEON);
     m.compose(new THREE.Vector3(b.x, baseY, b.z), q.setFromAxisAngle(UP, b.rot), ONE);
     const glow = (x, y, z, sx, sy, sz, c = col) => neon.push([m.clone().multiply(new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion(), new THREE.Vector3(sx, sy, sz))), c]);
     P.shop.walls(m, hw, hd, 0, GH, nx / 4, nz / 4, 0, 1, tint.clone().lerp(WHITE, 0.5), u0);
-    P[style].walls(m, hw, hd, GH, top, nx / 4, nz / 4, 0, (floors - 1) / 4, tint, u0);
+    P[style].walls(m, hw, hd, GH, y1, nx / 4, nz / 4, 0, f1 / 4, tint, u0);
+    if (back) {
+      P.plain.box(m, -hw - 0.3, hw + 0.3, y1, y1 + 0.5, -hd - 0.3, hd + 0.3, trim, ROOF); // Terrasse auf dem Rücksprung
+      for (const [ex, ez] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) glow(ex * (hw + 0.05), (GH + y1) / 2, ez * (hd + 0.05), 0.28, y1 - GH, 0.28);
+      w *= sb; d *= sb; hw *= sb; hd *= sb;
+      P[style].walls(m, hw, hd, y1 + 0.5, top, nx * sb / 4, nz * sb / 4, f1 / 4, (floors - 1) / 4, tint, u0);
+    }
     P.plain.box(m, -hw - 0.45, hw + 0.45, GH - 0.11, GH + 0.11, -hd - 0.45, hd + 0.45, trim);       // Vordach über den Läden
     P.plain.box(m, -hw - 0.3, hw + 0.3, top, top + 0.55, -hd - 0.3, hd + 0.3, trim, ROOF);         // Attika + Dachfläche
     heights.push(baseY + top + 0.55);
@@ -188,7 +225,8 @@ export function makeBuildings(city, baseY) {
       P.plain.box(m, -hw * 0.55, hw * 0.55, top + 0.55, top + 5.5, -hd * 0.55, hd * 0.55, trim, ROOF);
       P.plain.box(m, -0.15, 0.15, top + 5.5, top + 19, -0.15, 0.15, DARK);
       glow(0, top + 19.2, 0, 0.5, 0.5, 0.5, 0xff2222);                                              // Flugwarnlicht
-      for (const [ex, ez] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) glow(ex * (hw + 0.05), GH + (top - GH) / 2, ez * (hd + 0.05), 0.28, top - GH, 0.28);
+      const yc = back ? y1 : GH; // Eck-Neon am oberen Teil
+      for (const [ex, ez] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) glow(ex * (hw + 0.05), (yc + top) / 2, ez * (hd + 0.05), 0.28, top - yc, 0.28);
       for (const s of [-1, 1]) { glow(0, top + 0.3, s * (hd + 0.32), w + 0.7, 0.2, 0.12); glow(s * (hw + 0.32), top + 0.3, 0, 0.12, 0.2, d + 0.7); }
     } else if (style !== 'office') glow(0, top + 0.28, hd + 0.33, w * 0.94, 0.16, 0.1);             // Neonband an der Dachkante
     if (style === 'deco') {
