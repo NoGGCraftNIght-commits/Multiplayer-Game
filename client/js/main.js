@@ -8,8 +8,9 @@ import { Combat } from './combat.js';
 import { Audio } from './audio.js';
 import { Input } from './input.js';
 import { Hud } from './hud.js';
+import { makeHeli } from './heli.js';
 import { Net, Interp, RENDER_DELAY } from './net.js';
-import { A, AIM_FLAG, AVATARS, WEAPONS, DAY_LENGTH, TICK_HZ, PED_HZ, HALF, BEACH, buildCity, pushOut, clamp, sanitizeName, sanitizeRoom } from './shared.js';
+import { A, AIM_FLAG, AVATARS, COPS, WEAPONS, DAY_LENGTH, TICK_HZ, PED_HZ, HALF, BEACH, buildCity, pushOut, clamp, sanitizeName, sanitizeRoom } from './shared.js';
 
 // Spritzstadt – Spielschleife: Menü, Beitritt, eigene Figur, Kamera, Fahren, Netz, HUD.
 const $ = (id) => document.getElementById(id);
@@ -42,11 +43,13 @@ const canvas = $('game'), ui = {};
 for (const id of ['hpbar', 'wname', 'ammo', 'weapon', 'speed', 'kmh', 'vname', 'crosshair', 'hitmarker', 'hint', 'ko', 'kotext', 'vignette', 'scoreboard', 'clock', 'playerCount', 'tAct', 'tHorn', 'tFire', 'tAim', 'tWeapon']) ui[id] = $(id);
 const my = { name: '', avatar: 0, color: COLORS[0][0] };
 const players = new Map(), joining = new Set(), peds = [], pedBuf = new Interp();
+// Stadtwache: 8 feste Plätze; ohne Wachen/Hubschrauber schickt der Server nichts -> Leerstand einsetzen
+const cops = [], copBuf = new Interp(), heliBuf = new Interp(), NOCOPS = Array.from({ length: 48 }, (_, i) => i % 6 === 4 ? -1 : 0), NOHELI = [0, -999, 0, 0, 0];
 const cam = { yaw: 0, pitch: -0.12, dist: 3.9, side: 0.42, up: 1.6, fov: 65, free: 0, d: 3.9 };
-let city, world, vehicles, combat, audio, input, hud, preview, net, me, link = '';
+let city, world, vehicles, combat, audio, input, hud, preview, net, me, heli, link = '';
 // ?debug: Spielzustand für automatische Tests offenlegen (G.tod = feste Tageszeit)
-const DEBUG = params.has('debug') ? window.G = { players, peds, cam, tod: null, get me() { return me; }, get net() { return net; }, get vehicles() { return vehicles; }, get combat() { return combat; }, get input() { return input; }, get world() { return world; } } : null;
-let phase = 'load', paused = false, roomStart = 0, sendT = 0, slowT = 0, lockLost = 0, koUntil = 0, koBy = '', hitT = 0, tod = 0.735, last = performance.now();
+const DEBUG = params.has('debug') ? window.G = { players, peds, cops, cam, tod: null, get heli() { return heli; }, get me() { return me; }, get net() { return net; }, get vehicles() { return vehicles; }, get combat() { return combat; }, get input() { return input; }, get world() { return world; } } : null;
+let phase = 'load', paused = false, roomStart = 0, sendT = 0, slowT = 0, lockLost = 0, koUntil = 0, koBy = '', hitT = 0, tod = 0.735, simT = 0, last = performance.now();
 
 // ---------- Start ----------
 async function boot() {
@@ -145,7 +148,7 @@ function start(n, r, url) {
   if (r.seed !== city.seed) throw new Error('Server und Spiel haben verschiedene Versionen.');
   net = n; roomStart = r.start; net.sync(r.serverTime);
   const [x, z] = r.spawn;
-  me = { id: r.id, ...my, hp: 100, alive: true, score: 0, kos: 0, pos: new THREE.Vector3(x, world.groundY(x, z), z), yaw: 0, speed: 0, vy: 0, air: false,
+  me = { id: r.id, ...my, hp: 100, alive: true, score: 0, kos: 0, stars: 0, pos: new THREE.Vector3(x, world.groundY(x, z), z), yaw: 0, speed: 0, vy: 0, air: false,
     veh: null, busy: false, aim: false, pitch: 0, fireT: 0, emote: 'wave', emoteT: 0, stepD: 0, anim: 'idle', nearCar: null, nearPed: -1, char: new Character(my.avatar, my.color) };
   me.char.setWeapon(0); world.scene.add(me.char.root);
   for (const p of r.players) if (p.id !== me.id) addPlayer(p);
@@ -195,7 +198,14 @@ function bindNet() {
     }
     for (const v of s.v) vehicles.snapshot(s.t, v);
   });
-  net.on('peds', (s) => pedBuf.push(s.t, s.a));
+  net.on('peds', (s) => { pedBuf.push(s.t, s.a); copBuf.push(s.t, s.c || NOCOPS); heliBuf.push(s.t, s.h || NOHELI); });
+  net.on('wanted', ({ stars, hide }) => {
+    if (stars > me.stars) { hud.feed(me.stars ? 'Die Fahndung wird verschärft!' : 'Die Stadtwache sucht dich!'); audio.play('ui', { vol: 0.9, rate: 0.6 }); }
+    else if (!stars && me.stars) hud.feed('Fahndung eingestellt');
+    me.stars = stars;
+    txt($('starsOn'), '★'.repeat(stars)); txt($('starsOff'), '★'.repeat(5 - stars));
+    $('stars').className = stars ? (hide ? 'hide' : '') : 'off'; // blinkt, solange dich keine Wache sieht
+  });
   net.on('pjoin', (p) => { addPlayer(p); hud.feed(`${p.name} ist da`); });
   net.on('pleave', ({ id }) => {
     joining.delete(id);
@@ -239,7 +249,10 @@ function bindNet() {
     me.pos.set(x, world.groundY(x, z), z); me.air = false; ui.ko.classList.add('hidden');
     combat.ammo = WEAPONS.map(w => w.mag); combat.reloadT = 0;
   });
-  net.on('shoot', (s) => { const p = players.get(s.id); combat.spawn(s, false, p?.color); if (p) p.char.kick = 1; });
+  net.on('shoot', (s) => { // Schütze: Mitspieler oder Wache (negative Nummer)
+    const p = players.get(s.id), ch = p?.char || cops[-1 - s.id]?.char;
+    combat.spawn(s, false, p?.color); if (ch) ch.kick = 1;
+  });
   net.on('pedhit', ({ id }) => hud.say(OUCH[(id + Math.floor(performance.now())) % OUCH.length], pedHead(id), 1.6));
   net.on('say', ({ ped, line }) => hud.say(HELLO[line % HELLO.length], pedHead(ped), 2.6));
   net.on('horn', ({ vid }) => { const v = vehicles.list[vid]; if (v) audio.horn(v.pos); });
@@ -251,11 +264,12 @@ function bindNet() {
   });
 }
 
-// Ziele für Projektile: Mitspieler, sichtbare Passanten und ich selbst (nur für fremde Schüsse)
+// Ziele für Projektile: Mitspieler, sichtbare Passanten, Wachen und ich selbst (nur für fremde Schüsse)
 function targets() {
   const out = [];
   for (const p of players.values()) if (p.alive && !p.veh && p.char.root.visible) out.push({ t: 'p', id: p.id, x: p.pos.x, y: p.pos.y, z: p.pos.z });
   peds.forEach((p, i) => { if (p.char?.root.visible) out.push({ t: 'n', id: i, x: p.x, y: SLAB, z: p.z }); });
+  cops.forEach((c, i) => { if (c.on && c.char && !c.down) out.push({ t: 'c', id: i, x: c.pos.x, y: c.pos.y, z: c.pos.z }); });
   if (me.alive && !me.veh) out.push({ me: true, x: me.pos.x, y: me.pos.y, z: me.pos.z });
   return out;
 }
@@ -399,6 +413,7 @@ function bump(v, now) {
     return true;
   };
   peds.forEach((p, i) => { if (hit(p, p.x, p.z)) net.emit('hit', { t: 'n', id: i, w: 'car' }); });
+  cops.forEach((c, i) => { if (c.on && !c.down && c.pos.y < 2 && hit(c, c.pos.x, c.pos.z)) net.emit('hit', { t: 'c', id: i, w: 'car' }); });
   for (const p of players.values()) if (p.alive && !p.veh && hit(p, p.pos.x, p.pos.z)) net.emit('hit', { t: 'p', id: p.id, w: 'car' });
 }
 
@@ -457,10 +472,51 @@ function updatePeds(dt, t) {
   }
 }
 
+// Stadtwache: wie Passanten, aber mit Höhe (Abseilen), Blaster und Zielhaltung
+function updateCops(dt, t) {
+  const s = copBuf.sample(t); if (!s) return;
+  const [a, b, k] = s;
+  for (let i = 0, o = 0; o < b.length; i++, o += 6) {
+    const c = cops[i] ||= { char: null, pos: new THREE.Vector3(), on: false, down: false, kind: -1, color: '#3d7bff' };
+    const anim = b[o + 4], u = a[o + 4] < 0 ? 1 : k; // gerade erschienen: nicht vom Nullpunkt herüberschieben
+    c.on = anim >= 0;
+    if (c.on && c.kind !== b[o + 5]) { c.char?.dispose(); c.char = null; c.kind = b[o + 5]; } // neue Wache auf diesem Platz
+    if (c.on && !c.char) {
+      const m = COPS[c.kind];
+      if (!assets.models[m]) loadModel(m);
+      else { c.char = new Character(m, null, { castShadow: world.q.shadows > 0 }); c.char.setWeapon(0); world.scene.add(c.char.root); }
+    }
+    if (c.char) c.char.root.visible = c.on;
+    if (!c.on || !c.char) continue;
+    const x = lerp(a[o], b[o], u), z = lerp(a[o + 2], b[o + 2], u), yaw = a[o + 3] + turn(a[o + 3], b[o + 3]) * u;
+    c.pos.set(x, world.groundY(x, z) + lerp(a[o + 1], b[o + 1], u), z);
+    c.down = (anim & 63) === A.down;
+    c.char.root.position.copy(c.pos); c.char.root.rotation.y = yaw;
+    c.char.play(anim & 63, 0.2, Math.hypot(b[o] - a[o], b[o + 2] - a[o + 2]) * PED_HZ);
+    c.char.aimAt(anim & AIM_FLAG ? _a.set(Math.sin(yaw), -0.04, Math.cos(yaw)) : null);
+    c.char.update(dt);
+  }
+}
+
+function updateHeli(dt, t) {
+  const s = heliBuf.sample(t), on = !!s && s[1][1] > -900;
+  if (heli) heli.group.visible = on;
+  audio.rotor(on ? world.camera.position.distanceTo(heli?.group.position || world.camera.position) : -1);
+  if (!on) return;
+  heli ||= makeHeli(world.scene);
+  const b = s[1], a = s[0][1] > -900 ? s[0] : b, k = s[2], g = heli.group; // erster Stand: ohne Übergang
+  g.position.set(lerp(a[0], b[0], k), lerp(a[1], b[1], k), lerp(a[2], b[2], k));
+  g.rotation.y += turn(g.rotation.y, a[3] + turn(a[3], b[3]) * k) * Math.min(1, dt * 3);
+  heli.rotor.rotation.y += dt * 38; heli.tail.rotation.x += dt * 60;
+  const len = Math.max(1, g.position.y - world.groundY(g.position.x, g.position.z) - 1.3);
+  heli.rope.visible = !!b[4]; heli.rope.scale.y = len; heli.rope.position.y = -1.3 - len / 2;
+  heli.beam.visible = world.night > 0.4; heli.beam.scale.set(len * 0.16, len, len * 0.16); heli.beam.position.y = -1.3 - len / 2; // Suchscheinwerfer
+}
+
 // ---------- Senden ----------
 function sendCar(sure) {
   const v = me.veh, p = v.pos, q = v.quat;
-  net[sure ? 'emit' : 'volatile']('vs', [v.id, r2(p.x), r2(p.y), r2(p.z), r3(q.x), r3(q.y), r3(q.z), r3(q.w), r2(v.steer), Math.round(performance.now())]); // Sendezeit: daraus liest der Server das Tempo
+  net[sure ? 'emit' : 'volatile']('vs', [v.id, r2(p.x), r2(p.y), r2(p.z), r3(q.x), r3(q.y), r3(q.z), r3(q.w), r2(v.steer), Math.round(simT)]); // Spielzeit: daraus liest der Server das Tempo
 }
 
 function send(dt) {
@@ -492,7 +548,7 @@ function drawHud(dt, now) {
   hud.update(world.camera);
   if ((slowT += dt) < 0.1) return; // Rest: 10x pro Sekunde reicht
   slowT = 0;
-  hud.minimap(me.pos, v ? carYaw(v) : me.yaw, cam.yaw, players.values(), vehicles.list);
+  hud.minimap(me.pos, v ? carYaw(v) : me.yaw, cam.yaw, [...players.values(), ...cops.filter(c => c.on)], vehicles.list);
   const m = Math.floor(tod * 1440);
   txt(ui.clock, `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`);
   txt(ui.playerCount, players.size + 1);
@@ -509,7 +565,7 @@ function play(dt, now) {
   if (me.veh) drive(dt, ctl, look); else walk(dt, ctl);
   vehicles.update(dt, t, world.night, world.camera.position);
   if (me.veh) { me.pos.copy(me.veh.pos); bump(me.veh, now); }
-  updatePlayers(dt, t); updatePeds(dt, t);
+  updatePlayers(dt, t); updatePeds(dt, t); updateCops(dt, t); updateHeli(dt, t);
   camera(dt);
   shoot(dt, ctl);
   combat.update(dt);
@@ -524,6 +580,7 @@ function play(dt, now) {
 function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  simT += dt * 1000; // Spielzeit in ms: bleibt bei Rucklern stehen wie die Physik (sonst sähe ein Ruckler wie ein Aufprall aus)
   if (phase === 'play') play(dt, now);
   else { // Menü: Kameraflug über die Stadt im Abendlicht
     const a = now * 4e-5, c = world.camera;

@@ -10,7 +10,11 @@ const url = `http://localhost:${process.env.PORT}`;
 const clients = [];
 const client = () => { const s = connect(url, { transports: ['websocket'], forceNew: true }); clients.push(s); return s; };
 const join = (s, data) => new Promise(res => s.emit('join', data, res));
-const once = (s, ev, ok = () => true) => new Promise(res => { const f = (d) => { if (ok(d)) { s.off(ev, f); res(d); } }; s.on(ev, f); });
+const once = (s, ev, ok = () => true) => new Promise((res, rej) => { // hängt nie: nach 15 s Fehler mit Ereignisname
+  const t = setTimeout(() => rej(new Error('wartet vergeblich auf: ' + ev)), 15000);
+  const f = (d) => { if (ok(d)) { clearTimeout(t); s.off(ev, f); res(d); } };
+  s.on(ev, f);
+});
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const step = (name) => console.log('ok  ' + name);
 const place = (p, x, z) => Object.assign(p, { x, z, budget: 12 });
@@ -124,6 +128,32 @@ const fresh = once(b, 'vdmg', q => q[6] === 0); v.resetAt = 0;
 assert.deepEqual((await fresh).slice(1), [100, 0, 0, 0, 0, 0], 'Wrack wird ersetzt');
 assert.deepEqual([v.x, v.z], v.home.slice(0, 2), 'und steht wieder am Parkplatz');
 step('Autoschaden + Explosion');
+
+// --- Fahndung: Sterne für Vergehen, Stadtwache rückt an und spritzt zurück, ab 3 Sternen Hubschrauber mit Abseilen, Verjährung
+await once(a, 'respawn');
+const wantedMsgs = []; a.on('wanted', m => wantedMsgs.push(m));
+const ped = room.peds[0];
+place(pa, ped.x + 3, ped.z); pa.wanted = 0.6; await sleep(300);
+a.emit('shoot', { w: 0, o: [pa.x, 1.4, pa.z], d: [ped.x - pa.x, 0, ped.z - pa.z], seed: 1 }); a.emit('hit', { t: 'n', id: 0, w: 0 });
+await once(a, 'wanted', m => m.stars === 1);
+const pedsMsg = await once(a, 'peds', m => m.c?.some((q, i) => i % 6 === 4 && q >= 0));
+assert.equal(pedsMsg.c.length, 48, 'Wachen stehen in der Passanten-Nachricht');
+const cop = room.cops.find(Boolean);
+assert(Math.hypot(cop.x - pa.x, cop.z - pa.z) > 40, 'Wache erscheint außer Sicht');
+place(pa, X, Z); Object.assign(cop, { x: X + 8, z: Z, node: null }); pa.hp = 100;
+assert.equal((await once(a, 'hp', q => q.id === ra.id)).w, -3, 'Wache trifft mit Wasser');
+cop.hp = 1; const before = pa.wanted;
+a.emit('shoot', { w: 0, o: [X, 1.4, Z], d: [1, 0, 0], seed: 1 }); a.emit('hit', { t: 'c', id: cop.id, w: 0 }); await sleep(150);
+assert.deepEqual([cop.state, pa.wanted > before + 1], ['down', true], 'Wache umgespritzt gibt Sterne');
+pa.wanted = 3.2; pa.hp = 1e6; await once(a, 'peds', m => m.h);
+Object.assign(room.heli, { x: X, z: Z, y: room.heli.want });
+await once(a, 'peds', m => m.h[4] === 1); // Seil hängt: jemand kommt herunter
+const roper = room.cops.find(c => c && c.state === 'rope');
+assert(roper.y > 10, 'Wache seilt sich aus dem Hubschrauber ab');
+room.cops.fill(null); room.heli = null; pa.seenT = 0; pa.hp = 100;
+await once(a, 'wanted', m => m.stars === 0);
+assert.equal(pa.wanted, 0, 'Sterne verjähren ohne Wache in der Nähe');
+step('Fahndung, Stadtwache, Hubschrauber');
 
 // --- Verkehr fließt (bleibt nicht hinter geparkten Autos hängen)
 const traffic = room.vehicles.filter(q => q.traffic), from = traffic.map(q => [q.x, q.z]);

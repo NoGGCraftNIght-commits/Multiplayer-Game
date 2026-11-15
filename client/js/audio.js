@@ -46,6 +46,18 @@ export class Audio {
     this.eng.g.gain.setTargetAtTime(on ? 0.06 + Math.abs(throttle) * 0.05 : 0, t, 0.1);
   }
 
+  // Hubschrauber: tiefes Knattern, leiser mit der Entfernung (dist < 0 = aus)
+  rotor(dist) {
+    if (!this.ctx || (dist < 0 && !this.rot)) return;
+    if (!this.rot) {
+      const o = this.ctx.createOscillator(), f = this.ctx.createBiquadFilter(), g = this.ctx.createGain();
+      o.type = 'sawtooth'; o.frequency.value = 19; f.type = 'lowpass'; f.frequency.value = 260; g.gain.value = 0;
+      o.connect(f).connect(g).connect(this.master); o.start();
+      this.rot = g;
+    }
+    this.rot.gain.setTargetAtTime(dist < 0 ? 0 : 0.5 / (1 + dist * dist * 0.0004), this.ctx.currentTime, 0.2);
+  }
+
   horn(pos) {
     if (!this.ctx) return;
     let g = 0.25;

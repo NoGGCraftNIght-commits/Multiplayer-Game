@@ -1,0 +1,29 @@
+# Liefert den Ordner client/ als Webseite aus (GitHub Pages).
+# Einmalig nötig: Settings → Pages → Source: "GitHub Actions".
+name: Spiel auf GitHub Pages veröffentlichen
+on:
+  push:
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  deploy:
+    # nur der Hauptzweig wird veröffentlicht
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: client
+      - id: deployment
+        uses: actions/deploy-pages@v4

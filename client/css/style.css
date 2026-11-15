@@ -70,6 +70,11 @@ summary { cursor: pointer; font-weight: 700; }
 #minimap { position: absolute; top: max(12px, env(safe-area-inset-top)); left: max(12px, env(safe-area-inset-left)); width: 150px; height: 150px; border-radius: 50%;
   border: 3px solid rgba(255,255,255,.7); box-shadow: 0 6px 20px rgba(0,0,0,.4); background: #2c3346; }
 #clock { position: absolute; top: calc(max(12px, env(safe-area-inset-top)) + 156px); left: max(12px, env(safe-area-inset-left)); width: 150px; text-align: center; font-weight: 800; text-shadow: 0 2px 4px #000; }
+#stars { position: absolute; top: max(10px, env(safe-area-inset-top)); right: max(14px, env(safe-area-inset-right)); font-size: 30px; line-height: 1; letter-spacing: 2px; color: rgba(255, 255, 255, .25); text-shadow: 0 2px 5px rgba(0, 0, 0, .6); }
+#stars b { color: #ffd23f; font-weight: 400; }
+#stars.hide b { animation: blink .8s steps(2, start) infinite; }
+#stars.off { display: none; }
+@keyframes blink { to { visibility: hidden; } }
 #feed { position: absolute; top: max(60px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right)); display: grid; gap: 4px; justify-items: end; max-width: 60vw; }
 #feed div { background: var(--panel); padding: 3px 12px; border-radius: 10px; font-size: 15px; animation: fadein .2s; }
 @keyframes fadein { from { opacity: 0; transform: translateX(20px); } }

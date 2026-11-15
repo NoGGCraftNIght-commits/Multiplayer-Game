@@ -4,8 +4,8 @@ Reihenfolge = Abarbeitung. Nach jeder Phase: Test, Commit, Push auf `claude/conf
 Status: ☐ offen · ◐ in Arbeit · ☑ fertig
 
 ## Phase 0 – Abschluss alter Plan
-- ☐ README (Deutsch, Schritt für Schritt, Quellen + Lizenzen)
-- ☐ GitHub-Pages-Workflow (`client/` ausliefern)
+- ☑ README (Deutsch, Schritt für Schritt, Quellen + Lizenzen)
+- ☑ GitHub-Pages-Workflow (`client/` ausliefern)
 - ☑ `_dev/` löschen
 
 ## Phase 1 – Alle 42 Figuren
@@ -15,8 +15,8 @@ Status: ☐ offen · ◐ in Arbeit · ☑ fertig
 - ☑ Passanten nutzen alle 42 (Qualität „Niedrig“: nur 14 verschiedene, schont Chromebook-Speicher)
 
 ## Phase 2 – Blaster sehen echter aus
-- ☑ Realistischere Proportionen und Größen (Pistole, MP, Schrotflinte, Werfer)
-- ☑ Dunkles Metall/Kunststoff statt Bonbonfarben, Spielerfarbe nur als Akzent, orange Mündung (bleibt als Spielzeug erkennbar)
+- ☑ Dunkles Metall/Kunststoff statt Bonbonfarben, orange Mündung (bleibt als Spielzeug erkennbar)
+- ☐ Andere Proportionen/Größen je Blaster (nicht gemacht: Formen der Modelle unverändert)
 
 ## Phase 3 – Chromebook: Trackpad + Touch, automatisch
 - ☑ Tablet-Modus wird erkannt (`pointer: coarse` + zuletzt benutztes Gerät), Umschalten im laufenden Spiel
@@ -40,14 +40,15 @@ Client darf nur noch: Eingaben, Kamera, Effekte, Animation, Ton.
 - ☑ Explosion trifft Fahrer, Leute und Autos in der Nähe (Kettenreaktion möglich); Wrack wird nach 25 s ersetzt
 
 ## Phase 6 – Fahndungssterne, Stadtwache, Hubschrauber
-- ☐ 0–5 Sterne pro Spieler, serverseitig. Punkte für: Passanten nass spritzen, Leute anfahren, fahrendes Auto klauen, Wache treffen, Auto sprengen
-- ☐ Stadtwache (Rocketbox-Polizeifiguren) erscheint außer Sicht, läuft über das Straßennetz, spritzt mit Wasser zurück (Schaden würfelt der Server)
-- ☐ Ab 3 Sternen: Hubschrauber fliegt an, bleibt über dem Spieler, Wachen seilen sich ab; nachts Suchscheinwerfer
-- ☐ Sterne verfallen, wenn keine Wache in der Nähe ist; K.o. durch Wache = „Erwischt!“, Sterne weg
-- ☐ HUD: Sternanzeige, blinkt beim Abtauchen
+- ☑ 0–5 Sterne pro Spieler, serverseitig. Punkte für: Passanten nass spritzen, Leute anfahren, fahrendes Auto klauen, Wache treffen, Auto sprengen
+- ☑ Stadtwache (Rocketbox-Polizeifiguren) erscheint außer Sicht, läuft über das Straßennetz, spritzt mit Wasser zurück (Schaden würfelt der Server)
+- ☑ Ab 3 Sternen: Hubschrauber fliegt an, bleibt über dem Spieler, Wachen seilen sich ab; nachts Suchscheinwerfer
+- ☑ Sterne verfallen, wenn keine Wache in der Nähe ist; K.o. durch Wache = „Erwischt!“, Sterne weg
+- ☑ HUD: Sternanzeige, blinkt beim Abtauchen
 
 ## Phase 7 – Schluss
-- ☐ Browser-Test mit 2 Clients (Playwright), README nachziehen, Quellen/Lizenzen ergänzen
+- ☑ Browser-Test mit 2 Clients (Playwright), README, Quellen/Lizenzen
+- ☐ Test auf echtem Chromebook/Tablet (hier nicht möglich)
 
 ## Bewusst weggelassen
 - Server-Physik für Autos (Server prüft Plausibilität, simuliert nicht selbst)

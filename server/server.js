@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Server } from 'socket.io';
 import {
-  MAX_PLAYERS, TICK_HZ, PED_HZ, A, AVATARS, WEAPONS, VEHICLES, VEHICLE_TYPES, CAR_HIT_DAMAGE, GRID, HALF, BEACH, LANE, ROAD,
+  MAX_PLAYERS, TICK_HZ, PED_HZ, A, AIM_FLAG, AVATARS, COPS, WEAPONS, VEHICLES, VEHICLE_TYPES, CAR_HIT_DAMAGE, GRID, CELL, HALF, BEACH, LANE, ROAD,
   buildCity, sidewalkLoop, node, rng, clamp, pushOut, sanitizeName, sanitizeRoom,
 } from '../client/js/shared.js';
 
@@ -22,6 +22,8 @@ const RESPAWN_MS = 4000;
 const CRASH = 1.3;           // Schadenspunkte am Auto je m/s plötzlichem Tempoverlust
 const FUSE_MS = 4500;        // brennendes Auto explodiert nach dieser Zeit
 const WRECK_MS = 25000;      // so lange bleibt ein Wrack liegen
+const COP_SLOTS = 8;         // höchstens so viele Wachen pro Raum
+const WANT = [0, 2, 3, 4, 5, 6]; // Wachen, die ein Spieler mit n Sternen auf sich zieht; ab 3 Sternen kommt der Hubschrauber
 
 // ---------- statische Dateien (damit "npm start" lokal sofort spielbar ist) ----------
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -113,7 +115,7 @@ function randomSidewalkSpot(rand = Math.random) {
 // ---------- Raum ----------
 function createRoom(code) {
   const rand = rng(Math.floor(Math.random() * 1e9));
-  const room = { code, players: new Map(), nextPid: 1, vehicles: [], peds: [], start: Date.now(), emptySince: 0, rand };
+  const room = { code, players: new Map(), nextPid: 1, vehicles: [], peds: [], start: Date.now(), emptySince: 0, rand, cops: Array(COP_SLOTS).fill(null), heli: null };
   // geparkte Autos
   city.parking.forEach((s, i) => {
     room.vehicles.push(makeVehicle(i, VEHICLE_TYPES[Math.floor(rand() * VEHICLE_TYPES.length)], s.x, s.z, s.yaw));
@@ -265,7 +267,7 @@ io.on('connection', (socket) => {
     const [x, z] = randomSidewalkSpot();
     me = { id: room.nextPid++, sid: socket.id, name: sanitizeName(data.name), avatar: clamp(data.avatar | 0, 0, AVATARS.length - 1), color,
       x, y: 0, z, yaw: 0, anim: A.idle, veh: 0, weap: 0, pitch: 0, hp: 100, alive: true, score: 0, kos: 0, hitLog: [], lastSt: 0,
-      ammo: WEAPONS.map(w => w.mag), reloadW: -1, reloadAt: 0, credit: 2, shotT: 0, shots: [], budget: 12, moveT: Date.now(), fixT: 0 };
+      ammo: WEAPONS.map(w => w.mag), reloadW: -1, reloadAt: 0, credit: 2, shotT: 0, shots: [], budget: 12, moveT: Date.now(), fixT: 0, wanted: 0, seenT: 0, starsSent: 0, copT: 0 };
     room.players.set(socket.id, me);
     room.emptySince = 0;
     socket.join(code);
@@ -306,13 +308,15 @@ io.on('connection', (socket) => {
     v.budget = Math.min(25, v.budget + Math.min(3, (now - v.rt) / 1000) * VEHICLES[v.type].vmax * 1.3);
     if (d > v.budget) { v.rt = now; if (now - me.fixT > 200) { me.fixT = now; socket.emit('vfix', vehState(v)); } return; }
     v.budget -= d;
-    // Aufprall = plötzlicher Tempoverlust. Zeitbasis ist die Sendezeit des Clients (ohne Netz-Jitter),
-    // solange sie mit der Serveruhr Schritt hält; sonst zählt die Empfangszeit.
-    const ct = finite(s[9]) ? s[9] : now, inSync = Math.abs(ct - now - v.off) < 1000, dtm = inSync ? ct - v.ct : now - v.rt;
-    if (!inSync) v.off = ct - now;
+    // Aufprall = plötzlicher Tempoverlust. Zeitbasis ist die Spielzeit des Clients (ohne Netz-Jitter, steht bei Rucklern still wie
+    // seine Physik). Läuft sie der Serveruhr davon, wird neu angekoppelt: selten -> diese eine Messung auslassen;
+    // ständig -> Empfangszeit nehmen, damit sich niemand per Uhr unverwundbar macht.
+    const ct = finite(s[9]) ? s[9] : now, inSync = Math.abs(ct - now - v.off) < 1000;
+    let dtm = ct - v.ct, check = true;
+    if (!inSync) { v.off = ct - now; if (now - v.syncT > 5000) check = false; else dtm = now - v.rt; v.syncT = now; }
     v.ct = ct; v.rt = now;
     const ok = dtm >= 15 && dtm <= 250, vx = ok ? (x - v.x) / dtm * 1000 : 0, vz = ok ? (z - v.z) / dtm * 1000 : 0;
-    if (ok && v.vok) {
+    if (ok && v.vok && check) {
       const dvx = vx - v.vx, dvz = vz - v.vz, dv = Math.hypot(dvx, dvz);
       if (dv > 3.5 + 0.12 * Math.hypot(v.vx, v.vz)) crash(room, v, dv, -dvx, -dvz, me);
     }
@@ -328,9 +332,9 @@ io.on('connection', (socket) => {
     const v = room.vehicles[vid | 0];
     if (!v || !me.alive || me.veh || v.driver || v.st === 2) return ack(false);
     if (Math.hypot(v.x - me.x, v.z - me.z) > 6) return ack(false);
-    if (v.traffic) { v.traffic = null; scarePeds(room, v.x, v.z, 10); } // Verkehrsauto übernommen: Fahrer flieht (unsichtbar) – Passanten erschrecken
+    if (v.traffic) { v.traffic = null; scarePeds(room, v.x, v.z, 10); crime(me, 1); } // Verkehrsauto übernommen: Fahrer flieht (unsichtbar) – Passanten erschrecken
     v.driver = me.id; me.veh = v.id + 1; v.moved = v.rt = Date.now();
-    Object.assign(v, { budget: 25, vok: false, off: NaN, vx: 0, vz: 0 });
+    Object.assign(v, { budget: 25, vok: false, off: NaN, syncT: 0, vx: 0, vz: 0 });
     io.to(room.code).emit('vown', { vid: v.id, driver: me.id });
     ack(true);
   });
@@ -368,9 +372,20 @@ io.on('connection', (socket) => {
     if (h.t === 'n') {
       const p = room.peds[id];
       if (!p || !ok(p.x, p.z)) return;
-      if (isCar) { p.state = 'down'; p.timer = 2.5; }
-      else if (p.state !== 'down') { p.state = 'react'; p.timer = 0.9; p.fleeFrom = [me.x, me.z]; }
+      if (isCar) { p.state = 'down'; p.timer = 2.5; crime(me, 1); }
+      else if (p.state !== 'down') {
+        if (now - (p.wetT || 0) > 3000) crime(me, 0.5); // ein Vorfall, nicht jeder Tropfen
+        p.wetT = now; p.state = 'react'; p.timer = 0.9; p.fleeFrom = [me.x, me.z];
+      }
       io.to(room.code).emit('pedhit', { id: p.id, by: me.id, car: isCar });
+      return;
+    }
+    if (h.t === 'c') { // Stadtwache getroffen: bringt Sterne
+      const c = room.cops[id];
+      if (!c || c.state === 'down' || !ok(c.x, c.z)) return;
+      c.hp -= isCar ? 999 : WEAPONS[wi].damage;
+      crime(me, 0.25);
+      if (c.hp <= 0) { c.state = 'down'; c.timer = 6; c.anim = A.down; crime(me, 1); }
       return;
     }
     const target = byId(room, id);
@@ -414,7 +429,7 @@ function hurt(room, target, dmg, by, w) {
 }
 
 function knockOut(room, target, by, w) {
-  target.alive = false; target.anim = A.down; target.kos++;
+  target.alive = false; target.anim = A.down; target.kos++; target.wanted = 0;
   if (by === target) by = null;
   if (by) by.score++;
   if (target.veh) releaseVehicle(room, target);
@@ -459,6 +474,7 @@ function explode(room, v) {
   }
   for (const q of room.peds) if (Math.hypot(q.x - v.x, q.z - v.z) < 8) { q.state = 'down'; q.timer = 3; }
   scarePeds(room, v.x, v.z, 30);
+  if (by) crime(by, 1);
   for (const o of room.vehicles) if (o !== v && Math.hypot(o.x - v.x, o.z - v.z) < 7) hurtCar(room, o, 45, zoneOf(o, v.x - o.x, v.z - o.z), by); // Kettenreaktion
 }
 
@@ -468,6 +484,109 @@ function resetCar(room, v) {
   if (v.isTraffic) startTraffic(room, v);
   else { const [x, z, yaw] = v.home; v.x = x; v.z = z; v.qy = Math.sin(yaw / 2); v.qw = Math.cos(yaw / 2); }
   io.to(room.code).emit('vdmg', dmgState(v));
+}
+
+// ---------- Fahndung: Sterne, Stadtwache, Hubschrauber ----------
+const stars = (p) => Math.floor(p.wanted);
+function crime(p, pts) { p.wanted = Math.min(5.9, p.wanted + pts); p.seenT = Date.now(); }
+const roadIdx = (v) => clamp(Math.round((v + HALF - ROAD / 2) / CELL), 0, GRID); // nächste Straße zu einer Koordinate
+// Flughöhe: über freiem Gelände niedrig, über und neben Gebäuden mit Abstand darüber
+function roofAt(x, z) {
+  let m = 12;
+  walls.forEach((s, i) => { if (x > s.x0 - 14 && x < s.x1 + 14 && z > s.z0 - 14 && z < s.z1 + 14) m = Math.max(m, city.buildings[i].floors * 3.2 + 3); });
+  return m + 14;
+}
+const newCop = (id, x, z, y, state, target) => ({ id, x, y, z, yaw: 0, anim: A.idle, kind: Math.floor(Math.random() * COPS.length), hp: 60, state, target, cool: 1, idle: 0, timer: 0, node: null });
+
+// läuft 10x pro Sekunde
+function stepWanted(room, dt, now) {
+  const cops = room.cops, players = [...room.players.values()];
+  let top = null; // meistgesuchter Spieler mit mindestens 3 Sternen: Ziel des Hubschraubers
+  for (const p of players) {
+    const n = stars(p);
+    if (n) { // Sterne verfallen, wenn länger keine Wache in der Nähe war
+      const h = room.heli;
+      if (cops.some(c => c && c.state !== 'down' && Math.hypot(c.x - p.x, c.z - p.z) < 45) || (h && Math.hypot(h.x - p.x, h.z - p.z) < 70)) p.seenT = now;
+      if (now - p.seenT > 12000 + 3000 * n) p.wanted = 0;
+    } else if (p.wanted && now - p.seenT > 20000) p.wanted = 0; // Kleinkram verjährt
+    const msg = stars(p) * 2 + (stars(p) && now - p.seenT > 3000 ? 1 : 0);
+    if (msg !== p.starsSent) { p.starsSent = msg; io.to(p.sid).emit('wanted', { stars: stars(p), hide: !!(msg & 1) }); }
+    if (p.alive && stars(p) >= 3 && (!top || p.wanted > top.wanted)) top = p;
+  }
+  // Nachschub: zu Fuß von einer Kreuzung außer Sicht, ab 3 Sternen zusätzlich per Seil aus dem Hubschrauber
+  for (const p of players) {
+    const n = stars(p), slot = cops.indexOf(null), mine = cops.filter(c => c && c.target === p.id && c.state !== 'down').length, h = room.heli;
+    if (!n || !p.alive || slot < 0 || mine >= WANT[n] || now - p.copT < 2500) continue;
+    if (h && h.target === p.id && Math.hypot(h.x - p.x, h.z - p.z) < 24 && Math.abs(h.y - h.want) < 3 && !pushOut(walls, h.x, h.z, 2.5)) {
+      p.copT = now; cops[slot] = newCop(slot, h.x + Math.random() * 4 - 2, h.z + Math.random() * 4 - 2, h.y - 2, 'rope', p.id);
+    } else if (n < 3 || mine < 2) {
+      const spots = [];
+      for (let i = 0; i <= GRID; i++) for (let j = 0; j <= GRID; j++) {
+        const [x, z] = node(i, j), d = Math.hypot(x - p.x, z - p.z);
+        if (d > 45 && d < 100 && players.every(q => Math.hypot(x - q.x, z - q.z) > 40)) spots.push([x, z]);
+      }
+      if (!spots.length) continue;
+      const [x, z] = spots[Math.floor(Math.random() * spots.length)];
+      p.copT = now; cops[slot] = newCop(slot, x, z, 0, 'chase', p.id);
+    }
+  }
+  for (const c of cops) {
+    if (!c) continue;
+    const t = byId(room, c.target);
+    if (c.state === 'down') { if ((c.timer -= dt) <= 0) cops[c.id] = null; continue; }
+    if (c.state === 'rope') { c.y = Math.max(0, c.y - 8 * dt); c.anim = A.crouch; if (!c.y) c.state = 'chase'; continue; }
+    if (!t || !t.alive || !stars(t) || Math.hypot(t.x - c.x, t.z - c.z) > 130) { // Einsatz vorbei oder abgehängt: abziehen
+      c.anim = A.look; if ((c.idle += dt) > 3) cops[c.id] = null;
+      continue;
+    }
+    c.idle = 0;
+    const dx = t.x - c.x, dz = t.z - c.z, d = Math.hypot(dx, dz) || 1, clear = !sightBlocked(c.x, c.z, t.x, t.z);
+    if (clear && d < 15) { // stehen, zielen, spritzen – ob es trifft, würfelt der Server
+      c.yaw = Math.atan2(dx, dz); c.anim = A.idle | AIM_FLAG;
+      if ((c.cool -= dt) > 0) continue;
+      c.cool = 0.7;
+      const l = Math.hypot(dx, t.y - 0.35, dz);
+      io.to(room.code).volatile.emit('shoot', { id: -1 - c.id, w: 0, o: [r2(c.x), 1.45, r2(c.z)], d: [r2(dx / l), r2((t.y - 0.35) / l), r2(dz / l)], seed: Math.floor(Math.random() * 1e9) });
+      if (Math.random() < clamp(0.8 - d * 0.03 - (t.veh ? 0.35 : 0), 0.1, 0.8)) hurt(room, t, 7, null, -3);
+      continue;
+    }
+    // laufen: bei freier Sicht direkt, sonst von Kreuzung zu Kreuzung (Straßen sind immer frei)
+    let gx = t.x, gz = t.z;
+    if (clear) c.node = null;
+    else {
+      c.node ||= [roadIdx(c.x), roadIdx(c.z)];
+      const [nx, nz] = node(...c.node), far = (q) => Math.hypot(node(...q)[0] - t.x, node(...q)[1] - t.z);
+      if (Math.hypot(nx - c.x, nz - c.z) < 3) {
+        const [i, j] = c.node, next = [[i + 1, j], [i - 1, j], [i, j + 1], [i, j - 1]].filter(([a, b]) => a >= 0 && b >= 0 && a <= GRID && b <= GRID).sort((a, b) => far(a) - far(b))[0];
+        if (far(next) < far(c.node)) c.node = next; else c.node = 0; // näher geht es über Straßen nicht: direkt weiter
+      }
+      if (c.node) [gx, gz] = node(...c.node);
+    }
+    const mx = gx - c.x, mz = gz - c.z, ml = Math.hypot(mx, mz) || 1, go = Math.min(ml, 5.6 * dt);
+    c.x += mx / ml * go; c.z += mz / ml * go;
+    const o = pushOut(city.solids, c.x, c.z, 0.45); if (o) { c.x += o[0]; c.z += o[1]; }
+    c.yaw = Math.atan2(mx, mz); c.anim = A.sprint;
+  }
+  // Hubschrauber: fliegt den Gesuchten an, bleibt über ihm stehen, zieht ab, wenn niemand mehr 3 Sterne hat
+  let h = room.heli;
+  if (top && !h) { const a = Math.random() * 6.28; h = room.heli = { x: top.x + Math.cos(a) * 160, y: 80, z: top.z + Math.sin(a) * 160, yaw: 0, target: top.id, want: 80, gone: 0 }; }
+  if (!h) return;
+  const cur = byId(room, h.target), t = cur && cur.alive && stars(cur) >= 3 ? cur : top;
+  if (!t) { // kein Ziel mehr
+    h.y += 6 * dt; h.x += Math.sin(h.yaw) * 30 * dt; h.z += Math.cos(h.yaw) * 30 * dt;
+    if ((h.gone += dt) > 8) room.heli = null;
+    return;
+  }
+  h.gone = 0; h.target = t.id;
+  // Schwebepunkt: 16 m neben dem Ziel (von unten sichtbar, Platz zum Abseilen), nie über einem Gebäude
+  let ox = h.x - t.x, oz = h.z - t.z; const ol = Math.hypot(ox, oz) || 1; ox *= 16 / ol; oz *= 16 / ol;
+  for (let k = 0; k < 8 && pushOut(walls, t.x + ox, t.z + oz, 2.5); k++) [ox, oz] = [ox * 0.707 - oz * 0.707, ox * 0.707 + oz * 0.707];
+  const dx = t.x + ox - h.x, dz = t.z + oz - h.z, d = Math.hypot(dx, dz) || 1, ux = dx / d, uz = dz / d;
+  h.want = Math.max(roofAt(h.x, h.z), d > 40 ? roofAt(h.x + ux * 40, h.z + uz * 40) : 0, d > 80 ? roofAt(h.x + ux * 80, h.z + uz * 80) : 0);
+  const sp = Math.min(28, d * 0.9) * (h.y < h.want - 6 ? 0.25 : 1); // erst steigen, dann über Häuser fliegen
+  h.x += ux * sp * dt; h.z += uz * sp * dt;
+  h.yaw = Math.atan2(t.x - h.x, t.z - h.z); // Nase zum Ziel
+  h.y += clamp(h.want - h.y, -7 * dt, 9 * dt);
 }
 
 // ---------- Simulation & Broadcast ----------
@@ -489,9 +608,13 @@ setInterval(() => {
     const vehicles = room.vehicles.filter(v => v.driver || v.traffic || now - v.moved < 3000).map(vehState);
     io.to(code).emit('snap', { t: now, p: players, v: vehicles });
     if (sendPeds) {
-      const a = [];
+      stepWanted(room, 1 / PED_HZ, now);
+      const a = [], h = room.heli, msg = { t: now, a };
       for (const p of room.peds) a.push(r2(p.x), r2(p.z), r2(p.yaw), p.anim, p.avatar);
-      io.to(code).emit('peds', { t: now, a });
+      // Wachen: je Platz [x, höhe, z, yaw, anim (-1 = leer), figur]; Hubschrauber: [x, y, z, yaw, seil]
+      if (room.cops.some(Boolean)) msg.c = room.cops.flatMap(c => c ? [r2(c.x), r2(c.y), r2(c.z), r2(c.yaw), c.anim, c.kind] : [0, 0, 0, 0, -1, 0]);
+      if (h) msg.h = [r2(h.x), r2(h.y), r2(h.z), r2(h.yaw), room.cops.some(c => c && c.state === 'rope') ? 1 : 0];
+      io.to(code).emit('peds', msg);
     }
   }
 }, 1000 / TICK_HZ);
