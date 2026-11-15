@@ -10,7 +10,7 @@ const FEMALE = { idle: 'f_idle', walk: 'f_walk', run: 'f_run' };
 const PACE = { walk: 1.01, run: 2.89, sprint: 5.83, f_walk: 1.22, f_run: 2.75 }; // m/s, die ein Clip von Natur aus zurücklegt
 const UP = new THREE.Vector3(0, 1, 0), ZERO = new THREE.Vector3();
 const _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _d = new THREE.Vector3(), _m = new THREE.Matrix4();
-const boxes = {}, rigs = {};
+const guns = {}, rigs = {};
 let clips;
 
 // Griff-Ausrichtung einmal pro Avatar aus der T-Pose ableiten (Finger = vorn, Daumen = oben)
@@ -33,25 +33,61 @@ function point(bone, axis, dir, w) {
   bone.quaternion.slerp(_q2.setFromUnitVectors(_v2, _v).multiply(bone.quaternion), w);
 }
 
-// Spielzeug-Blaster: Originalmodell (Mündung bei -z) + Tönung in Spielerfarbe, Griff im Ursprung
-function makeBlaster(wi, color) {
-  const src = assets.models[WEAPONS[wi].model].scene;
-  const bb = (boxes[wi] ||= new THREE.Box3().setFromObject(src));
-  const len = bb.max.z - bb.min.z, gy = bb.min.y + (bb.max.y - bb.min.y) * 0.25, gz = bb.max.z - len * 0.25;
+// Bunte Flächen der Blaster-Textur werden zu schwarzem Kunststoff, graue zu dunklem Stahl
+function gunmetal(map) {
+  const c = document.createElement('canvas'); c.width = map.image.width; c.height = map.image.height;
+  const g = c.getContext('2d'); g.drawImage(map.image, 0, 0);
+  const d = g.getImageData(0, 0, c.width, c.height), p = d.data;
+  for (let i = 0; i < p.length; i += 4) {
+    const mx = Math.max(p[i], p[i + 1], p[i + 2]), mn = Math.min(p[i], p[i + 1], p[i + 2]);
+    const v = mx && (mx - mn) / mx > 0.25 ? 26 + mx * 0.09 : mx * 0.5;
+    p[i] = v; p[i + 1] = v * 1.03; p[i + 2] = v * 1.1;
+  }
+  g.putImageData(d, 0, 0);
+  const t = new THREE.CanvasTexture(c);
+  return Object.assign(t, { flipY: map.flipY, colorSpace: map.colorSpace, magFilter: map.magFilter, minFilter: map.minFilter, generateMipmaps: map.generateMipmaps });
+}
+
+// Maße, dunkles Material und Mündung (vorderste Punkte des Modells, Mündung liegt bei -z) einmal je Blaster
+function gunOf(wi) {
+  if (guns[wi]) return guns[wi];
+  const src = assets.models[WEAPONS[wi].model].scene; src.updateMatrixWorld(true);
+  const bb = new THREE.Box3().setFromObject(src), len = bb.max.z - bb.min.z, front = [];
+  let map = null, x = 0, y = 0, r = 0;
+  src.traverse(o => {
+    if (!o.isMesh) return;
+    map ||= o.material.map;
+    const p = o.geometry.attributes.position;
+    for (let i = 0; i < p.count; i++) if (_v.fromBufferAttribute(p, i).applyMatrix4(o.matrixWorld).z < bb.min.z + len * 0.012) front.push(_v.x, _v.y);
+  });
+  for (let i = 0; i < front.length; i += 2) { x += front[i] * 2 / front.length; y += front[i + 1] * 2 / front.length; }
+  for (let i = 0; i < front.length; i += 2) r = Math.max(r, Math.hypot(front[i] - x, front[i + 1] - y));
+  return guns[wi] = { src, bb, len, x, y, r, mat: new THREE.MeshStandardMaterial({ map: map && gunmetal(map), color: map ? 0xffffff : 0x25272c, metalness: 0.55, roughness: 0.42 }) };
+}
+const TIP = new THREE.MeshStandardMaterial({ color: 0xff6a00, roughness: 0.5 });
+
+// Spielzeug-Blaster: Form vom Originalmodell, Farben wie echtes Gerät; nur die orange Mündung verrät das Spielzeug.
+// Griff liegt im Ursprung, Mündung zeigt nach +z.
+function makeBlaster(wi) {
+  const { src, bb, len, x, y, r, mat } = gunOf(wi);
+  const gy = bb.min.y + (bb.max.y - bb.min.y) * 0.25, gz = bb.max.z - len * 0.25;
   const inner = src.clone(true); inner.rotation.y = Math.PI; inner.position.set(0, -gy, gz);
-  inner.traverse(o => { if (o.isMesh) { o.material = o.material.clone(); if (color != null) o.material.color.lerp(new THREE.Color(color), 0.35); o.castShadow = true; } });
+  inner.traverse(o => { if (o.isMesh) { o.material = mat; o.castShadow = true; } });
   const g = new THREE.Group(); g.add(inner);
+  g.userData.muzzle = new THREE.Vector3(-x, y - gy, gz - bb.min.z);
+  const tip = new THREE.Mesh(new THREE.CylinderGeometry(r * 1.12, r * 1.12, len * 0.05, 12), TIP);
+  tip.rotation.x = Math.PI / 2; tip.position.copy(g.userData.muzzle).z -= len * 0.02; g.add(tip);
   g.scale.setScalar(100 * THREE.MathUtils.clamp(len * 0.42, 0.34, 0.6) / len); // Handknochen rechnet in cm
-  g.userData.muzzle = new THREE.Vector3(0, (bb.min.y + bb.max.y) / 2 - gy, gz - bb.min.z);
   return g;
 }
 
 export class Character {
-  constructor(avatarIndex, color, { ring = false, castShadow = true } = {}) {
-    const name = AVATARS[avatarIndex] || AVATARS[0];
+  // avatar = Index in AVATARS oder Modellname (Stadtwache); noch nicht geladene Figuren fallen auf Figur 1 zurück
+  constructor(avatar, color, { ring = false, castShadow = true } = {}) {
+    const want = typeof avatar === 'string' ? avatar : AVATARS[avatar], name = assets.models[want] ? want : AVATARS[0];
     clips ||= Object.fromEntries(assets.models.avatar_clips.animations.map(c => [c.name, c]));
     this.rig = rigOf(name);
-    this.female = name.startsWith('avatar_f');
+    this.female = name.includes('_f');
     this.color = color;
     this.root = new THREE.Group();
     this.model = SkeletonUtils.clone(assets.models[name].scene);
@@ -74,7 +110,7 @@ export class Character {
     if (this.blaster) this.hand.remove(this.blaster);
     this.weapon = wi; this.blaster = null;
     if (wi < 0 || !WEAPONS[wi]) return;
-    this.blaster = makeBlaster(wi, this.color);
+    this.blaster = makeBlaster(wi);
     this.blaster.quaternion.copy(this.rig.grip); this.blaster.position.copy(this.rig.palm);
     this.hand.add(this.blaster);
   }

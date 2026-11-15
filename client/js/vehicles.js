@@ -9,6 +9,42 @@ const SCALE = new THREE.Vector3(...CAR_SIZE);
 const HC = 0.62;          // Höhe des Physik-Schwerpunkts über Modellboden (m)
 const WHEEL_R = 0.3 * SCALE.y;
 const REST = 0.3, SAG = 0.065; // Federweg; SAG = Einfedern im Stand (g / (4 * Federhärte))
+const DOOR_AT = 45;       // ab so viel Seitenschaden fehlt die Tür
+const _p = new THREE.Vector3(), _d = new THREE.Vector3(), _m1 = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _m3 = new THREE.Matrix4(), _ray = new THREE.Raycaster();
+const ramp = (u, from) => { const t = Math.min(1, Math.max(0, (u - from) / (1 - from))); return t * t * (3 - 2 * t); };
+const rnd = (a, b) => a + Math.random() * (b - a);
+const BURNT = new THREE.MeshStandardMaterial({ color: 0x141312, roughness: 1 }), HOLE = new THREE.MeshBasicMaterial({ color: 0x07080a });
+const GREY = [0.62, 0.62, 0.64], DARK = [0.07, 0.07, 0.07], FIRE = [3.2, 1.1, 0.18], EMBER = [2.4, 0.35, 0.05];
+const pixel = Object.assign(document.createElement('canvas'), { width: 1, height: 1 }).getContext('2d', { willReadFrequently: true });
+const SOFT = (() => { // weicher runder Tupfer für Rauch und Flammen
+  const c = Object.assign(document.createElement('canvas'), { width: 64, height: 64 }), g = c.getContext('2d'), r = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  r.addColorStop(0, 'rgba(255,255,255,1)'); r.addColorStop(0.6, 'rgba(255,255,255,.75)'); r.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = r; g.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(c);
+})();
+
+// Rauch und Feuer: Punktwolke, auf der CPU bewegt; Farbe [r,g,b] mit Deckkraft, die über die Lebenszeit ausblendet
+class Puffs {
+  constructor(scene, n, size, additive) {
+    this.n = n; this.i = 0; this.q = [];
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3).fill(-999), 3));
+    g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(n * 4), 4));
+    this.pts = new THREE.Points(g, new THREE.PointsMaterial({ size, map: SOFT, vertexColors: true, transparent: true, depthWrite: false, blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending }));
+    this.pts.frustumCulled = false; scene.add(this.pts);
+  }
+  emit(p, vx, vy, vz, life, c, a = 1) { this.q[this.i = (this.i + 1) % this.n] = { x: p.x, y: p.y, z: p.z, vx, vy, vz, life, age: 0, c, a }; }
+  update(dt) {
+    const pos = this.pts.geometry.attributes.position, col = this.pts.geometry.attributes.color, drag = 1 - Math.min(1, dt * 1.6);
+    for (let k = 0; k < this.n; k++) {
+      const q = this.q[k]; if (!q) continue;
+      if ((q.age += dt) >= q.life) { this.q[k] = null; pos.setXYZ(k, 0, -999, 0); continue; }
+      q.x += q.vx * dt; q.y += q.vy * dt; q.z += q.vz * dt; q.vx *= drag; q.vz *= drag;
+      pos.setXYZ(k, q.x, q.y, q.z); col.setXYZW(k, q.c[0], q.c[1], q.c[2], q.a * (1 - q.age / q.life));
+    }
+    pos.needsUpdate = col.needsUpdate = true;
+  }
+}
 
 export class Vehicles {
   constructor(scene, city, heights) {
@@ -25,6 +61,9 @@ export class Vehicles {
     city.solids.forEach((s, i) => { const h = heights[i] || 4; addBox((s.x0 + s.x1) / 2, h / 2, (s.z0 + s.z1) / 2, (s.x1 - s.x0) / 2, h / 2, (s.z1 - s.z0) / 2); });
     for (const [x, z, hx, hz] of [[BEACH / 2, -HALF - 1, SIZE / 2 + BEACH / 2 + 6, 1], [BEACH / 2, HALF + 1, SIZE / 2 + BEACH / 2 + 6, 1], [-HALF - 1, 0, 1, SIZE / 2 + 2], [HALF + BEACH + 5, 0, 1, SIZE / 2 + 2]]) addBox(x, 2, z, hx, 2, hz);
     this.mine = null; // { v, rv } wenn ich fahre
+    this.smoke = new Puffs(scene, 260, 1.7, false); this.fire = new Puffs(scene, 220, 1.0, true); this.debris = [];
+    this.flash = new THREE.PointLight(0xff8a30, 0, 45); scene.add(this.flash); // von Anfang an in der Szene: kein Shader-Neubau beim ersten Knall
+    this.onBoom = null; // (v) => Ton usw.
   }
 
   // s = [id,x,y,z,qx,qy,qz,qw,steer,driver,typeIdx,traffic]
@@ -38,6 +77,7 @@ export class Vehicles {
     const wheels = [];
     model.traverse(o => { if (/^wheel-(front|back)-(left|right)$/.test(o.name)) wheels.push({ node: o, front: o.name.includes('front'), base: o.quaternion.clone() }); });
     for (const w of wheels) { w.node.position.multiply(SCALE); w.node.scale.multiplyScalar(SCALE.y); group.add(w.node); }
+    const shell = []; model.traverse(o => { if (o.isMesh) shell.push(o); }); // Karosserie-Teile (verformbar)
     const bb = new THREE.Box3().setFromObject(group);
     const half = new CANNON.Vec3((bb.max.x - bb.min.x) / 2 * 0.95, 0.36, (bb.max.z - bb.min.z) / 2 * 0.97);
     const body = new CANNON.Body({ type: CANNON.Body.KINEMATIC, mass: 0 });
@@ -51,7 +91,7 @@ export class Vehicles {
       const h = new THREE.Mesh(hl, lightMat); h.position.set(sx * half.x * 0.62, 0.6, bb.max.z + 0.01); group.add(h);
       const t = new THREE.Mesh(hl, tailMat); t.position.set(sx * half.x * 0.66, 0.68, bb.min.z - 0.01); group.add(t);
     }
-    const v = { id: s[0], type, cfg, group, model, wheels, body, half, bb, lightMat, tailMat, buf: new Interp(), driver: s[9], traffic: !!s[11], spin: 0, steer: 0, speed: 0,
+    const v = { id: s[0], type, cfg, group, model, wheels, shell, body, half, bb, lightMat, tailMat, buf: new Interp(), hp: 100, dz: [0, 0, 0, 0], st: 0, doors: [null, null], hop: -1, driver: s[9], traffic: !!s[11], spin: 0, steer: 0, speed: 0,
       pos: new THREE.Vector3(s[1], s[2], s[3]), quat: new THREE.Quaternion(s[4], s[5], s[6], s[7]) };
     this.list[v.id] = v;
     this.place(v, v.pos, v.quat);
@@ -106,15 +146,22 @@ export class Vehicles {
     this.mine = null;
   }
 
+  // Server hat einen Sprung abgelehnt: Auto auf seinen Stand zurücksetzen
+  fix(s) {
+    const b = this.mine?.v.body;
+    if (b && this.mine.v.id === s[0]) { b.position.set(s[1], s[2] + HC, s[3]); b.velocity.setZero(); b.angularVelocity.setZero(); }
+  }
+
   // input: { throttle -1..1, steer -1..1, handbrake }
   drive(input, dt) {
     const { v, rv } = this.mine, cfg = v.cfg, b = v.body;
+    const power = v.st ? 0 : 0.5 + 0.5 * Math.min(1, v.hp / 60); // angeschlagener Motor zieht schlechter, brennend gar nicht
     const fwd = new CANNON.Vec3(); b.quaternion.vmult(new CANNON.Vec3(0, 0, 1), fwd);
     const speed = b.velocity.dot(fwd);
     v.speed = speed;
     let engine = 0, brake = 0;
-    if (input.throttle > 0) { if (speed < -1) brake = 60; else if (speed < cfg.vmax) engine = cfg.force * input.throttle; }
-    else if (input.throttle < 0) { if (speed > 1) brake = 70 * -input.throttle; else if (speed > -12) engine = cfg.force * 0.6 * input.throttle; }
+    if (input.throttle > 0) { if (speed < -1) brake = 60; else if (speed < cfg.vmax) engine = cfg.force * input.throttle * power; }
+    else if (input.throttle < 0) { if (speed > 1) brake = 70 * -input.throttle; else if (speed > -12) engine = cfg.force * 0.6 * input.throttle * power; }
     else brake = 4;
     this.braking = brake > 10 || !!input.handbrake;
     const steerMax = cfg.steer * (1 - Math.min(Math.abs(speed) / cfg.vmax, 1) * 0.6);
@@ -140,7 +187,7 @@ export class Vehicles {
   }
 
   // ---------- pro Frame ----------
-  update(dt, renderT, night) {
+  update(dt, renderT, night, eye) {
     const self = this.mine?.v;
     // fremde Fahrzeuge: interpolierte Pose -> Kinematik-Körper
     for (const v of this.list) {
@@ -161,10 +208,10 @@ export class Vehicles {
     this.world.step(1 / 60, dt, 4);
     for (const v of this.list) {
       if (!v) continue;
-      if (v === self) { // eigene Pose aus Physik
-        const b = v.body;
-        v.quat.set(b.quaternion.x, b.quaternion.y, b.quaternion.z, b.quaternion.w);
-        v.pos.set(b.position.x, b.position.y - HC, b.position.z);
+      if (v === self) { // eigene Pose aus Physik, zwischen den festen Physikschritten geglättet (auch der Server liest daraus das Tempo)
+        const b = v.body, q = b.interpolatedQuaternion, p = b.interpolatedPosition;
+        v.quat.set(q.x, q.y, q.z, q.w);
+        v.pos.set(p.x, p.y - HC, p.z);
         v.group.position.copy(v.pos); v.group.quaternion.copy(v.quat);
       } else if (!v.buf.len()) { v.body.velocity.setZero(); }
       // Räder drehen + lenken
@@ -177,13 +224,106 @@ export class Vehicles {
       const lit = night > 0.4 && (v.driver || v.traffic);
       v.lightMat.emissiveIntensity = lit ? 4 : 0.3;
       v.tailMat.emissiveIntensity = v === self && this.braking ? 4 : lit ? 2.5 : 0.4;
+      if (v.hop >= 0) { // Explosion wirft das Wrack hoch (nur Optik, der Server lässt es stehen)
+        const u = (v.hop += dt) / 1.1;
+        this.place(v, v.pos, v.quat);
+        if (u >= 1) v.hop = -1; else { v.group.position.y += 4 * u * (1 - u) * 1.9; v.group.rotateZ(Math.sin(u * Math.PI) * 0.5); }
+      }
+      // Rauch ab halber Energie (erst hell, dann dunkel), Flammen wenn es brennt
+      if ((v.hp >= 55 && !v.st) || v.pos.distanceToSquared(eye) > 150 * 150) continue;
+      const hood = v.group.localToWorld(_p.set(rnd(-0.3, 0.3), 0.95, v.st === 2 ? rnd(-1, 1) : v.bb.max.z - 0.75));
+      if (Math.random() < dt * (v.st ? 30 : 12)) this.smoke.emit(hood, rnd(-0.4, 0.4), rnd(1.4, 2.6), rnd(-0.4, 0.4), rnd(1.8, 3), v.st || v.hp < 28 ? DARK : GREY, v.st ? 0.95 : 0.6);
+      if (v.st) for (let k = Math.random() < dt * (v.st === 1 ? 70 : 14) ? 2 : 0; k > 0; k--) this.fire.emit(hood, rnd(-0.5, 0.5), rnd(1.2, 3.2), rnd(-0.5, 0.5), rnd(0.3, 0.7), k > 1 ? FIRE : EMBER);
     }
+    this.smoke.update(dt); this.fire.update(dt);
+    this.flash.intensity *= Math.exp(-dt * 8);
+    this.debris = this.debris.filter(d => { // abgefallene Türen
+      if ((d.t += dt) > 10) { this.scene.remove(d.mesh); return false; }
+      if (d.vel) {
+        d.vel.y -= 12 * dt; d.mesh.position.addScaledVector(d.vel, dt); d.mesh.rotation.x += d.spin * dt; d.mesh.rotation.z += d.spin * 0.7 * dt;
+        if (d.mesh.position.y < 0.1) { d.mesh.position.y = 0.1; d.mesh.rotation.set(0, d.mesh.rotation.y, Math.PI / 2); d.vel = null; }
+      }
+      return true;
+    });
+  }
+
+  // ---------- Schaden: die Zahlen kommen vom Server, hier wird nur gezeigt ----------
+  // s = [id, hp, vorn, hinten, links, rechts, zustand]; quiet = Stand beim Beitritt (ohne Knall und fliegende Türen)
+  setDamage(s, quiet) {
+    const v = this.list[s[0]]; if (!v) return;
+    const was = v.st, dz = s.slice(2, 6);
+    v.hp = s[1]; v.st = s[6];
+    if (dz.some((d, i) => d !== v.dz[i])) { v.dz = dz; this.crumple(v); }
+    for (const i of [0, 1]) if ((dz[2 + i] >= DOOR_AT) !== !!v.doors[i]) this.door(v, i, quiet);
+    if ((v.st === 2) !== (was === 2)) v.group.traverse(o => { // Wrack: alles verkohlt; ersetztes Auto: Originalmaterial zurück
+      if (!o.isMesh || v.doors.includes(o)) return;
+      if (v.st === 2) { o.userData.mat ||= o.material; o.material = BURNT; } else if (o.userData.mat) o.material = o.userData.mat;
+    });
+    if (v.st === 2 && was !== 2 && !quiet) this.boom(v);
+  }
+
+  // Blech je Zone zur Fahrzeugmitte drücken (immer aus der Originalform gerechnet: 0 Schaden = wieder heil)
+  crumple(v) {
+    const bb = v.bb, cx = (bb.max.x + bb.min.x) / 2, cz = (bb.max.z + bb.min.z) / 2, hx = (bb.max.x - bb.min.x) / 2, hz = (bb.max.z - bb.min.z) / 2;
+    const [f, r, l, rt] = v.dz.map(d => d / 100);
+    v.group.updateMatrixWorld(true);
+    _m1.copy(v.group.matrixWorld).invert();
+    for (const o of v.shell) {
+      const base = o.userData.base ||= o.geometry.attributes.position;
+      if (!o.userData.own) { // erst beim ersten Schaden bekommt das Auto eine eigene Geometrie (sonst teilen sich alle Autos eines Typs eine)
+        o.geometry = o.geometry.clone(); o.geometry.setAttribute('position', new THREE.Float32BufferAttribute(base.count * 3, 3)); o.userData.own = true;
+      }
+      const pos = o.geometry.attributes.position;
+      _m2.multiplyMatrices(_m1, o.matrixWorld); _m3.copy(_m2).invert();
+      for (let i = 0; i < base.count; i++) {
+        _p.fromBufferAttribute(base, i).applyMatrix4(_m2); // in Metern, Fahrzeugkoordinaten
+        const n = Math.abs(Math.sin(_p.x * 12.9898 + _p.y * 78.233 + _p.z * 37.719) * 43758.5453) % 1, k = 0.55 + 0.45 * n; // Zufall aus dem Ort: doppelte Eckpunkte bleiben zusammen
+        const u = (_p.z - cz) / hz, w = (_p.x - cx) / hx, mid = 1 - 0.5 * Math.abs(u);
+        const tf = ramp(u, 0.3) * f, tr = ramp(-u, 0.3) * r, tl = ramp(w, 0.5) * l * mid, tq = ramp(-w, 0.5) * rt * mid;
+        _p.z += (tr - tf) * hz * 0.42 * k;
+        _p.x += (tq - tl) * hx * 0.36 * k + (tf + tr) * (n - 0.5) * 0.22;
+        _p.y -= (tf + tr) * 0.16 * n * Math.max(0, _p.y - 0.4);
+        _p.applyMatrix4(_m3); pos.setXYZ(i, _p.x, _p.y, _p.z);
+      }
+      pos.needsUpdate = true; o.geometry.computeVertexNormals();
+    }
+  }
+
+  // Tür i (0 links, 1 rechts) fehlt: dunkle Öffnung in der Seite, die Tür selbst fliegt weg. Zweiter Aufruf = Tür wieder da.
+  door(v, i, quiet) {
+    if (v.doors[i]) { v.group.remove(v.doors[i]); v.doors[i] = null; return; }
+    const sx = i ? -1 : 1, len = v.bb.max.z - v.bb.min.z, z = (v.bb.max.z + v.bb.min.z) / 2 + len * 0.04;
+    v.group.updateMatrixWorld(true);
+    _ray.set(v.group.localToWorld(_p.set(sx * 3, 0.62, z)), _d.set(-sx, 0, 0).transformDirection(v.group.matrixWorld));
+    const hit = _ray.intersectObjects(v.shell, false)[0]; // Blech der Seite: dort sitzt die Öffnung, dort wird die Lackfarbe abgelesen
+    const x = hit ? v.group.worldToLocal(hit.point).x : sx * v.half.x, img = hit?.object.material.map?.image;
+    let color = 0x777b84;
+    if (img && hit.uv) {
+      const uv = hit.object.material.map.transformUv(hit.uv);
+      pixel.drawImage(img, Math.floor(uv.x * img.width), Math.floor(uv.y * img.height), 1, 1, 0, 0, 1, 1);
+      const c = pixel.getImageData(0, 0, 1, 1).data; color = (c[0] << 16) | (c[1] << 8) | c[2];
+    }
+    const hole = v.doors[i] = new THREE.Mesh(new THREE.PlaneGeometry(len * 0.27, 0.62), HOLE);
+    hole.position.set(x + sx * 0.03, 0.66, z); hole.rotation.y = sx * Math.PI / 2; v.group.add(hole);
+    if (quiet) return;
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.6, len * 0.27), new THREE.MeshStandardMaterial({ color, roughness: 0.6 }));
+    hole.getWorldPosition(mesh.position); mesh.quaternion.copy(v.quat); mesh.castShadow = true; this.scene.add(mesh);
+    this.debris.push({ mesh, t: 0, spin: rnd(3, 7), vel: _d.set(sx * 3.5, 2.6, 0).applyQuaternion(v.quat).clone() });
+  }
+
+  boom(v) {
+    v.hop = 0;
+    const p = _p.copy(v.pos); p.y += 0.9;
+    for (let k = 0; k < 60; k++) { const a = rnd(0, 6.28), sp = rnd(1, 9); this.fire.emit(p, Math.cos(a) * sp, rnd(1, 8), Math.sin(a) * sp, rnd(0.45, 1.1), k % 3 ? FIRE : EMBER); }
+    for (let k = 0; k < 34; k++) { const a = rnd(0, 6.28), sp = rnd(0.5, 5); this.smoke.emit(p, Math.cos(a) * sp, rnd(2, 6), Math.sin(a) * sp, rnd(1.8, 3.4), DARK, 0.85); }
+    this.flash.position.copy(p).y += 1.2; this.flash.intensity = 1400;
+    this.onBoom?.(v);
   }
 
   nearest(pos, maxDist) {
     let best = null, bd = maxDist;
     for (const v of this.list) {
-      if (!v || v.driver) continue;
+      if (!v || v.driver || v.st === 2) continue; // Wracks fährt niemand
       const d = v.pos.distanceTo(pos);
       if (d < bd) { bd = d; best = v; }
     }

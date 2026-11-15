@@ -13,9 +13,9 @@ import { GRID, BLOCK, ROAD, CELL, SIZE, HALF, BEACH, blockMin, roadCenter } from
 export const SLAB = 0.14; // Gehweghöhe (Bordstein)
 
 export const QUALITY = {
-  low:    { pixel: 0.75, maxDpr: 1,   shadows: 0,    bloom: false, ao: false, fog: 140, pedDist: 45, aa: false },
-  medium: { pixel: 1,    maxDpr: 1.5, shadows: 1024, bloom: true,  ao: false, fog: 260, pedDist: 80, aa: true },
-  high:   { pixel: 1,    maxDpr: 2,   shadows: 2048, bloom: true,  ao: true,  fog: 380, pedDist: 120, aa: true },
+  low:    { pixel: 0.75, maxDpr: 1,   shadows: 0,    bloom: false, ao: false, fog: 140, pedDist: 45, pedKinds: 14, aa: false },
+  medium: { pixel: 1,    maxDpr: 1.5, shadows: 1024, bloom: true,  ao: false, fog: 260, pedDist: 80, pedKinds: 42, aa: true },
+  high:   { pixel: 1,    maxDpr: 2,   shadows: 2048, bloom: true,  ao: true,  fog: 380, pedDist: 120, pedKinds: 42, aa: true },
 };
 
 const tmpM = new THREE.Matrix4(), tmpQ = new THREE.Quaternion(), tmpS = new THREE.Vector3(), tmpP = new THREE.Vector3();

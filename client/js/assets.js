@@ -4,7 +4,7 @@ import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { AVATARS, VEHICLE_TYPES, WEAPONS } from './shared.js';
 
 export const MODELS = [
-  ...AVATARS, 'avatar_clips', ...VEHICLE_TYPES, ...WEAPONS.map(w => w.model),
+  AVATARS[0], 'avatar_clips', ...VEHICLE_TYPES, ...WEAPONS.map(w => w.model),
   'tree_oak', 'tree_pine', 'tree_fat', 'tree_palm', 'bush', 'bush_large', 'rock_small', 'barrel', 'crate',
 ];
 export const SOUNDS = ['shoot', 'hit', 'impact', 'land', 'step', 'ui', 'confirm', 'kill', 'hurt', 'coin', 'dash'];
@@ -27,16 +27,18 @@ function fixMaterials(root) {
   });
 }
 
+const pending = {};
+// Modell einmal laden. Figuren kommen so erst bei Bedarf (alle 42 wären beim Start 12 MB); fällt eine aus, springt Figur 1 ein.
+export function loadModel(n, must = false) {
+  return pending[n] ||= loader.loadAsync(`assets/models/${n}.glb`).then(g => { fixMaterials(g.scene); assets.models[n] = g; },
+    (e) => { if (must) throw e; assets.models[n] = assets.models[AVATARS[0]]; });
+}
+
 export async function loadAll(onProgress) {
   let done = 0;
   const total = MODELS.length + SOUNDS.length;
   const tick = () => onProgress(++done / total);
-  await Promise.all(MODELS.map(async n => {
-    const g = await loader.loadAsync(`assets/models/${n}.glb`);
-    fixMaterials(g.scene);
-    assets.models[n] = g;
-    tick();
-  }));
+  await Promise.all(MODELS.map(n => loadModel(n, true).then(tick)));
   await Promise.all(SOUNDS.map(async n => {
     try { assets.sounds[n] = await (await fetch(`assets/sfx/${n}.ogg`)).arrayBuffer(); } catch { /* Ton optional */ }
     tick();

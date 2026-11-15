@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { SERVER_URL } from './config.js';
-import { loadAll } from './assets.js';
+import { loadAll, loadModel, assets } from './assets.js';
 import { World, SLAB, QUALITY } from './world.js';
 import { Vehicles } from './vehicles.js';
 import { Character } from './character.js';
@@ -41,7 +41,7 @@ const head = (o) => _h.set(o.pos.x, o.pos.y + (o.veh ? 2.5 : 2.05), o.pos.z);
 const canvas = $('game'), ui = {};
 for (const id of ['hpbar', 'wname', 'ammo', 'weapon', 'speed', 'kmh', 'vname', 'crosshair', 'hitmarker', 'hint', 'ko', 'kotext', 'vignette', 'scoreboard', 'clock', 'playerCount', 'tAct', 'tHorn', 'tFire', 'tAim', 'tWeapon']) ui[id] = $(id);
 const my = { name: '', avatar: 0, color: COLORS[0][0] };
-const players = new Map(), peds = [], pedBuf = new Interp();
+const players = new Map(), joining = new Set(), peds = [], pedBuf = new Interp();
 const cam = { yaw: 0, pitch: -0.12, dist: 3.9, side: 0.42, up: 1.6, fov: 65, free: 0, d: 3.9 };
 let city, world, vehicles, combat, audio, input, hud, preview, net, me, link = '';
 // ?debug: Spielzustand für automatische Tests offenlegen (G.tod = feste Tageszeit)
@@ -57,7 +57,8 @@ async function boot() {
   audio = new Audio(); audio.enabled = settings.sound;
   input = new Input(canvas); input.sens = settings.sens;
   hud = new Hud(city);
-  combat = new Combat({ scene: world.scene, city, heights: world.heights, groundY: (x, z) => world.groundY(x, z), vehicles, audio, targets, onHit });
+  combat = new Combat({ scene: world.scene, city, heights: world.heights, groundY: (x, z) => world.groundY(x, z), vehicles, audio, targets, onHit, onReload: (w) => net.emit('reload', w) });
+  vehicles.onBoom = (v) => { audio.play('impact', { pos: v.pos, vol: 3, rate: 0.32 }); audio.play('land', { pos: v.pos, vol: 2.5, rate: 0.45 }); };
   setupMenu();
   $('loading').classList.add('hidden'); $('menu').classList.remove('hidden');
   phase = 'menu';
@@ -73,8 +74,14 @@ function makePreview() {
   scene.add(new THREE.HemisphereLight(0xffffff, 0x8090b0, 2.4), sun);
   let ch = null;
   return {
-    set() { ch?.dispose(); ch = new Character(my.avatar, my.color, { ring: true, castShadow: false }); ch.setWeapon(0); scene.add(ch.root); },
-    draw(dt, t) { ch.root.rotation.y = Math.sin(t * 0.6) * 0.7; ch.update(dt); r.render(scene, c); },
+    set() {
+      const a = my.avatar; $('avNum').textContent = `${a + 1} / ${AVATARS.length}`;
+      loadModel(AVATARS[a]).then(() => { // bis die Figur da ist, bleibt die alte stehen
+        if (a !== my.avatar) return;
+        ch?.dispose(); ch = new Character(a, my.color, { ring: true, castShadow: false }); ch.setWeapon(0); scene.add(ch.root);
+      });
+    },
+    draw(dt, t) { if (!ch) return; ch.root.rotation.y = Math.sin(t * 0.6) * 0.7; ch.update(dt); r.render(scene, c); },
   };
 }
 
@@ -123,6 +130,7 @@ async function join() {
   phase = 'join'; $('menuError').textContent = ''; $('play').textContent = 'Verbinde …';
   audio.unlock().catch(() => {});
   my.name = sanitizeName($('name').value);
+  await loadModel(AVATARS[my.avatar]);
   const typed = $('serverUrl').value.trim(), url = typed || SERVER_URL, n = new Net(url);
   store.set('name', my.name); store.set('server', typed);
   try { start(n, await n.join({ room: $('room').value, ...my }), url); } catch (e) {
@@ -142,6 +150,7 @@ function start(n, r, url) {
   me.char.setWeapon(0); world.scene.add(me.char.root);
   for (const p of r.players) if (p.id !== me.id) addPlayer(p);
   for (const v of r.vehicles) vehicles.add(v);
+  for (const d of r.damage) vehicles.setDamage(d, true);
   bindNet();
   link = location.origin + location.pathname + '?room=' + r.room + (url && url !== SERVER_URL ? '&server=' + encodeURIComponent(url) : '');
   history.replaceState(null, '', link + (params.has('debug') ? '&debug' : '')); // Neuladen landet wieder im selben Raum
@@ -164,10 +173,14 @@ function setPause(on) {
 
 // ---------- Netz ----------
 function addPlayer(p) {
-  if (players.has(p.id)) return;
-  const char = new Character(p.avatar, p.color, { ring: true });
-  char.root.visible = false; world.scene.add(char.root);
-  players.set(p.id, { ...p, char, buf: new Interp(), pos: new THREE.Vector3(), veh: 0, alive: true, tag: hud.tag(p.name, p.color) });
+  if (players.has(p.id) || joining.has(p.id)) return;
+  joining.add(p.id);
+  loadModel(AVATARS[p.avatar]).then(() => {
+    if (!joining.delete(p.id)) return; // während des Ladens schon wieder gegangen
+    const char = new Character(p.avatar, p.color, { ring: true });
+    char.root.visible = false; world.scene.add(char.root);
+    players.set(p.id, { ...p, char, buf: new Interp(), pos: new THREE.Vector3(), veh: 0, alive: true, tag: hud.tag(p.name, p.color) });
+  });
 }
 
 const who = (id) => id === me.id ? me : players.get(id);
@@ -185,6 +198,7 @@ function bindNet() {
   net.on('peds', (s) => pedBuf.push(s.t, s.a));
   net.on('pjoin', (p) => { addPlayer(p); hud.feed(`${p.name} ist da`); });
   net.on('pleave', ({ id }) => {
+    joining.delete(id);
     const p = players.get(id); if (!p) return;
     hud.feed(`${p.name} ist weg`); p.char.dispose(); p.tag.remove(); players.delete(id);
   });
@@ -192,16 +206,30 @@ function bindNet() {
     const v = vehicles.list[vid]; if (!v) return;
     v.driver = driver; if (!driver && me.veh === v) leaveCar(false); // z. B. nach K.o. am Steuer
   });
-  net.on('hp', ({ id, hp, by }) => {
+  net.on('vdmg', (s) => {
+    const v = vehicles.list[s[0]]; if (!v) return;
+    if (s[1] < v.hp) audio.play('impact', { pos: v === me.veh ? null : v.pos, vol: 1.3, rate: 0.55 });
+    vehicles.setDamage(s);
+  });
+  // Server-Korrekturen: echter Munitionsstand, abgelehnte Sprünge
+  net.on('ammo', (a) => { combat.ammo = a; });
+  net.on('fix', ([x, z]) => { if (!me.veh) { me.pos.x = x; me.pos.z = z; } });
+  net.on('vfix', (s) => vehicles.fix(s));
+  net.on('hp', ({ id, hp, by, w }) => {
     const o = who(id); if (!o) return;
     o.hp = hp;
-    if (o === me) { flash(who(by)?.color || '#35c2ff'); audio.play('hurt', { vol: 0.7 }); }
+    if (o === me) { flash(w === -2 ? '#ff8a1f' : who(by)?.color || '#35c2ff'); audio.play('hurt', { vol: 0.7 }); }
   });
   net.on('ko', ({ id, by, w, score, kos }) => {
     const a = who(by), b = who(id);
     if (a) a.score = score; if (b) { b.kos = kos; b.hp = 0; }
-    hud.feed(`${a?.name ?? 'Jemand'} hat ${b?.name ?? 'jemanden'} ${VERB[w] ?? 'umgeschubst'}`);
-    if (b === me) { me.alive = false; koUntil = performance.now() + 4000; koBy = `von ${a?.name ?? 'jemandem'}`; ui.ko.classList.remove('hidden'); audio.play('kill'); }
+    const bn = b?.name ?? 'Jemand';
+    hud.feed(w === -2 ? `${bn} ist mit einem Auto in die Luft geflogen` : w === -3 ? `${bn} wurde von der Stadtwache erwischt` : `${a?.name ?? 'Jemand'} hat ${bn} ${VERB[w] ?? 'umgeschubst'}`);
+    if (b === me) {
+      me.alive = false; koUntil = performance.now() + 4000; ui.ko.classList.remove('hidden'); audio.play('kill');
+      koBy = w === -2 ? 'durch eine Explosion' : w === -3 ? 'von der Stadtwache' : `von ${a?.name ?? 'jemandem'}`;
+      txt(ui.ko.firstChild, w === -3 ? 'Erwischt!' : w === -2 ? 'Bumm!' : 'Durchgeweicht!');
+    }
     else if (a === me) audio.play('coin', { vol: 0.8 });
   });
   net.on('respawn', ({ id, x, z }) => {
@@ -416,9 +444,13 @@ function updatePeds(dt, t) {
     const p = peds[i] ||= { char: null, x: 0, z: 0 };
     p.x = lerp(a[o], b[o], k); p.z = lerp(a[o + 1], b[o + 1], k);
     const near = (p.x - c.x) ** 2 + (p.z - c.z) ** 2 < far;
-    if (near && !p.char) { p.char = new Character(b[o + 4], null, { castShadow: world.q.shadows > 0 }); world.scene.add(p.char.root); } // Figur erst bauen, wenn sie in Sicht kommt
+    if (near && !p.char) { // Figur erst laden und bauen, wenn sie in Sicht kommt
+      const av = AVATARS[b[o + 4] % world.q.pedKinds];
+      if (!assets.models[av]) loadModel(av);
+      else { p.char = new Character(av, null, { castShadow: world.q.shadows > 0 }); world.scene.add(p.char.root); }
+    }
     if (p.char) p.char.root.visible = near;
-    if (!near) continue;
+    if (!near || !p.char) continue;
     p.char.root.position.set(p.x, SLAB, p.z); p.char.root.rotation.y = a[o + 2] + turn(a[o + 2], b[o + 2]) * k;
     p.char.play(b[o + 3], 0.25, Math.hypot(b[o] - a[o], b[o + 1] - a[o + 1]) * PED_HZ);
     if ((p.x - c.x) * fwd.x + (p.z - c.z) * fwd.z > -4) p.char.update(dt); // hinter der Kamera nicht animieren
@@ -428,7 +460,7 @@ function updatePeds(dt, t) {
 // ---------- Senden ----------
 function sendCar(sure) {
   const v = me.veh, p = v.pos, q = v.quat;
-  net[sure ? 'emit' : 'volatile']('vs', [v.id, r2(p.x), r2(p.y), r2(p.z), r3(q.x), r3(q.y), r3(q.z), r3(q.w), r2(v.steer)]);
+  net[sure ? 'emit' : 'volatile']('vs', [v.id, r2(p.x), r2(p.y), r2(p.z), r3(q.x), r3(q.y), r3(q.z), r3(q.w), r2(v.steer), Math.round(performance.now())]); // Sendezeit: daraus liest der Server das Tempo
 }
 
 function send(dt) {
@@ -445,11 +477,11 @@ function drawHud(dt, now) {
   ui.hpbar.style.width = me.hp + '%';
   txt(ui.wname, combat.w.name); txt(ui.ammo, combat.reloadT > 0 ? 'lädt …' : `${combat.ammo[combat.weapon]} / ${combat.w.mag}`);
   ui.weapon.classList.toggle('hidden', !!v); ui.speed.classList.toggle('hidden', !v);
-  if (v) { txt(ui.kmh, Math.round(Math.abs(v.speed) * 3.6)); txt(ui.vname, v.cfg.name); }
+  if (v) { txt(ui.kmh, Math.round(Math.abs(v.speed) * 3.6)); txt(ui.vname, `${v.cfg.name} · ${v.st ? 'brennt!' : v.hp + ' %'}`); }
   ui.crosshair.style.opacity = v || !me.alive ? 0 : ''; ui.crosshair.classList.toggle('aim', me.aim);
   const key = (k, s) => touch ? s : `${k} – ${s}`;
   const hint = !me.alive || paused ? '' : !touch && document.pointerLockElement !== canvas ? 'Ins Spiel klicken, um die Maus zu fangen'
-    : v ? (Math.abs(v.speed) < 3 ? key('F', 'Aussteigen') : '') : me.nearCar ? key('F', me.nearCar.cfg.name + ' fahren') : me.nearPed >= 0 ? key('E', 'Hallo sagen') : '';
+    : v ? (v.st ? key('F', 'Raus hier – das Auto brennt!') : Math.abs(v.speed) < 3 ? key('F', 'Aussteigen') : '') : me.nearCar ? key('F', me.nearCar.cfg.name + ' fahren') : me.nearPed >= 0 ? key('E', 'Hallo sagen') : '';
   if (hint) txt(ui.hint, hint);
   ui.hint.classList.toggle('on', !!hint);
   ui.tAct.classList.toggle('hidden', !!v || me.nearPed < 0); ui.tHorn.classList.toggle('hidden', !v);
@@ -469,13 +501,13 @@ function drawHud(dt, now) {
 
 // ---------- Schleife ----------
 function play(dt, now) {
-  const t = net.serverNow() - RENDER_DELAY, ctl = !paused && me.alive, look = input.consumeLook();
+  const t = net.serverNow() - RENDER_DELAY, ctl = !paused && me.alive, look = input.consumeLook(dt);
   if (!paused) { cam.yaw -= look.x; cam.pitch = clamp(cam.pitch - look.y, -1.1, 1.2); }
   if (input.pressed('pause') && now - lockLost > 300) setPause(!paused); // Esc löst sonst Pause + sofort wieder Weiter aus
   if (ctl) controls();
   input.edges.clear();
   if (me.veh) drive(dt, ctl, look); else walk(dt, ctl);
-  vehicles.update(dt, t, world.night);
+  vehicles.update(dt, t, world.night, world.camera.position);
   if (me.veh) { me.pos.copy(me.veh.pos); bump(me.veh, now); }
   updatePlayers(dt, t); updatePeds(dt, t);
   camera(dt);

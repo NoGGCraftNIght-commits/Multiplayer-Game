@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { WEAPONS, rng, pushOut } from './shared.js';
 
 // Spielzeug-Blaster: Projektile fliegen sichtbar (Wasser, Schaumpfeile, Konfetti, Farbkleckse).
-// Der Schütze erkennt Treffer lokal und meldet sie dem Server; fremde Schüsse sind nur Effekt.
+// Der Schütze erkennt Treffer lokal und meldet sie dem Server, der sie prüft und den Schaden setzt; fremde Schüsse sind nur Effekt.
+// Munition zählt der Server mit: der Zähler hier ist nur die Vorhersage fürs HUD.
 // Streuung kommt aus einem Seed, damit alle Clients dieselben Flugbahnen sehen.
 const MAXP = 240, MAXQ = 900, MAXD = 140;
 const Z = new THREE.Vector3(0, 0, 1), _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _s = new THREE.Vector3(), _v = new THREE.Vector3(), _c = new THREE.Color();
@@ -10,7 +11,7 @@ const SHAPE = { water: [0.05, 0.3], dart: [0.035, 0.22], confetti: [0.05, 0.05],
 const SOUND = { water: 1.5, dart: 0.9, confetti: 0.6, paint: 0.45 };
 
 export class Combat {
-  // env: { scene, city, heights, groundY(x,z), vehicles, audio, targets() -> [{t,id,x,y,z,me?}], onHit(target, weapon) }
+  // env: { scene, city, heights, groundY(x,z), vehicles, audio, targets() -> [{t,id,x,y,z,me?}], onHit(target, weapon), onReload(weapon) }
   constructor(env) {
     Object.assign(this, env);
     this.weapon = 0; this.ammo = WEAPONS.map(w => w.mag); this.cool = 0; this.reloadT = 0;
@@ -29,7 +30,7 @@ export class Combat {
 
   get w() { return WEAPONS[this.weapon]; }
   switchTo(i) { this.weapon = (i + WEAPONS.length) % WEAPONS.length; this.reloadT = 0; this.cool = Math.max(this.cool, 0.25); }
-  reload() { if (!this.reloadT && this.ammo[this.weapon] < this.w.mag) { this.reloadT = this.w.reload; this.audio.play('dash', { vol: 0.5 }); } }
+  reload() { if (!this.reloadT && this.ammo[this.weapon] < this.w.mag) { this.reloadT = this.w.reload; this.onReload(this.weapon); this.audio.play('dash', { vol: 0.5 }); } }
 
   // lokaler Schuss; liefert das Netzwerk-Paket oder null (Abklingzeit, leer, lädt nach)
   fire(origin, dir, color) {

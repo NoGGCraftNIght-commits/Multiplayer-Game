@@ -13,8 +13,13 @@ export const ANIMS = ['idle', 'walk', 'run', 'sprint', 'jump', 'fall', 'drive', 
 export const A = Object.fromEntries(ANIMS.map((n, i) => [n, i]));
 export const AIM_FLAG = 64;
 
+// Reihenfolge = Netzwerk-ID. Die ersten 12 bleiben vorn, damit eine gespeicherte Auswahl gültig bleibt.
+const figs = (p, nums) => nums.map(n => `avatar_${p}${String(n).padStart(2, '0')}`);
 export const AVATARS = ['avatar_m01', 'avatar_f03', 'avatar_m04', 'avatar_f01', 'avatar_m06', 'avatar_f08',
-  'avatar_m08', 'avatar_f12', 'avatar_m16', 'avatar_f13', 'avatar_m17', 'avatar_f17'];
+  'avatar_m08', 'avatar_f12', 'avatar_m16', 'avatar_f13', 'avatar_m17', 'avatar_f17',
+  ...figs('f', [2, 4, 5, 6, 7, 9, 10, 11, 14, 15, 16]), ...figs('m', [2, 3, 5, 7, 9, 10, 11, 12, 13, 14, 15, 18, 19, 20, 21]),
+  'avatar_fb1', 'avatar_mb1', 'avatar_fs1', 'avatar_ms1']; // b = Büro, s = Strand
+export const COPS = ['cop_m1', 'cop_f1', 'cop_m2']; // Stadtwache
 
 // Spielzeug-Blaster: Schaden = "Spritzpunkte" auf 100 Energie
 export const WEAPONS = [
