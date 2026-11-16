@@ -30,8 +30,10 @@ Ohne Server läuft das Spiel nicht: Er verwaltet Räume, Passanten, Verkehr, Ene
 
 **Ohne eigenen Server (Standard auf GitHub Pages):** Wer „Spielen“ ohne Raumcode drückt, erstellt einen Raum; sein
 Browser rechnet dann das Spiel (`client/js/game-server.js`), die anderen verbinden sich per Raumcode direkt mit ihm
-(WebRTC, Vermittlung über den freien PeerJS-Dienst). Verlässt der Gastgeber das Spiel, endet der Raum.
-Ein eigener Server (unten) ist nur nötig, wenn Räume unabhängig vom Gastgeber laufen sollen.
+(WebRTC, Vermittlung über den freien PeerJS-Dienst; blockt ein Schulnetz direkte Verbindungen, läuft es über einen
+öffentlichen TURN-Relay). Das Spiel des Gastgebers rechnet ein Web Worker, es läuft also auch im Hintergrund-Tab weiter.
+Verlässt der Gastgeber das Spiel, übernimmt automatisch der Mitspieler mit der kleinsten Nummer den Raum (Ort, Waffen
+und Geld bleiben, Autos und Passanten beginnen neu).
 
 ### Server
 

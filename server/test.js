@@ -177,7 +177,8 @@ const atJump = (x, z) => z > RIVER.z0 - 1 && z < RIVER.z1 + 1 && JUMPS.some(i =>
 for (let k = 0; k < 40; k++) { await sleep(100); for (const q of traffic) assert(!atJump(q.x, q.z), 'Verkehr fährt in die Lücke einer Sprungrampe'); }
 const moving = traffic.filter((q, i) => Math.hypot(q.x - from[i][0], q.z - from[i][1]) > 8).length;
 assert(moving >= traffic.length - 2, `Verkehr steht: nur ${moving} von ${traffic.length} fahren`);
-assert(room.peds.every(p => buildCity().blocks[p.block].type !== 'river'), 'Passanten auf Flussblock');
+assert(room.peds.every(p => p.clerk || buildCity().blocks[p.block].type !== 'river'), 'Passanten auf Flussblock');
+assert(room.peds.some(p => p.clerk) && room.peds.some(p => p.state === 'cross' || p.nb !== undefined) , 'Verkäufer stehen in Läden, Passanten queren Straßen');
 assert.equal(riverY(0, (RIVER.z0 + RIVER.z1) / 2), RIVER.bed); assert.equal(riverY(0, RIVER.z0 - 1), 0); assert(riverY(0, RIVER.z0 + 5) < 0 && riverY(0, RIVER.z0 + 5) > RIVER.bed);
 step('Verkehr');
 

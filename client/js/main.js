@@ -51,7 +51,7 @@ const cam = { yaw: 0, pitch: -0.12, dist: 3.9, side: 0.42, up: 1.6, fov: 65, fre
 let city, world, vehicles, combat, audio, input, hud, preview, net, me, heli, link = '';
 // ?debug: Spielzustand für automatische Tests offenlegen (G.tod = feste Tageszeit)
 const DEBUG = params.has('debug') ? window.G = { players, peds, cops, cam, tod: null, get heli() { return heli; }, get me() { return me; }, get net() { return net; }, get vehicles() { return vehicles; }, get combat() { return combat; }, get input() { return input; }, get world() { return world; } } : null;
-let own = [true, false, false, false], money = 0, shopOpen = false, pickups = [], phase = 'load', paused = false, roomStart = 0, sendT = 0, slowT = 0, lockLost = 0, koUntil = 0, koBy = '', hitT = 0, tod = 0.735, simT = 0, last = performance.now();
+let own = [true, false, false, false], money = 0, hostId = 0, roomCode = '', shopOpen = false, pickups = [], phase = 'load', paused = false, roomStart = 0, sendT = 0, slowT = 0, lockLost = 0, koUntil = 0, koBy = '', hitT = 0, tod = 0.735, simT = 0, last = performance.now();
 
 // ---------- Start ----------
 async function boot() {
@@ -127,7 +127,10 @@ function setupMenu() {
     } catch { msg('Server nicht erreichbar.'); }
   });
   try { $('menuError').textContent = sessionStorage.getItem('ss_err') || ''; sessionStorage.removeItem('ss_err'); } catch { /* ohne Speicher keine Meldung */ }
-  $('play').onclick = join;
+  let mig = null; // Gastgeber war weg: automatisch zurück in denselben Raum
+  try { mig = JSON.parse(sessionStorage.getItem('ss_migrate')); sessionStorage.removeItem('ss_migrate'); } catch { /* ohne Speicher kein Wechsel */ }
+  if (mig && Date.now() - mig.t < 30000) { $('room').value = mig.code; setTimeout(() => join(mig), 0); }
+  $('play').onclick = () => join();
   for (const id of ['name', 'room']) $(id).addEventListener('keydown', (e) => { if (e.key === 'Enter') join(); });
   $('resume').onclick = () => setPause(false);
   $('leave').onclick = () => { net.close(); location.href = location.pathname; };
@@ -140,7 +143,7 @@ function setupMenu() {
   });
 }
 
-async function join() {
+async function join(mig = null) {
   if (phase !== 'menu') return;
   phase = 'join'; $('menuError').textContent = ''; $('play').textContent = 'Verbinde …';
   audio.unlock().catch(() => {});
@@ -150,8 +153,14 @@ async function join() {
   store.set('name', my.name);
   let n;
   try {
-    n = p2p ? new Net(null, typed ? await (await P2P()).connect(code) : (await P2P()).host(code, my.name)) : new Net(url);
-    start(n, await n.join({ room: code, ...my }), url);
+    let sock = null;
+    if (p2p && typed && !mig?.host) for (let k = 0; !sock; k++) { // nach einem Gastgeber-Wechsel braucht der neue Gastgeber ein paar Sekunden
+      try { sock = await (await P2P()).connect(code); } catch (e) { if (!mig || k >= 9) throw e; $('play').textContent = 'Warte auf neuen Gastgeber …'; await new Promise(r => setTimeout(r, 2500)); }
+    }
+    if (p2p && mig?.host) sock = await (await P2P()).connect(code, 5000).catch(() => null); // lebt der alte Gastgeber doch noch, nur wieder beitreten
+    if (p2p && !sock) sock = (await P2P()).host(code, my.name);
+    n = p2p ? new Net(null, sock) : new Net(url);
+    start(n, await n.join({ room: code, ...my, ...(mig ? { migrate: { own: mig.own, money: mig.money, x: mig.x, z: mig.z } } : {}) }), url);
   } catch (e) {
     n?.close(); phase = 'menu'; $('play').textContent = 'Spielen';
     const noServer = /Verbindung|antwortet/.test(e.message);
@@ -161,7 +170,7 @@ async function join() {
 
 function start(n, r, url) {
   if (r.seed !== city.seed) throw new Error('Server und Spiel haben verschiedene Versionen.');
-  net = n; roomStart = r.start; net.sync(r.serverTime);
+  net = n; roomStart = r.start; net.sync(r.serverTime); hostId = r.hostId; roomCode = r.room;
   const [x, z] = r.spawn;
   me = { id: r.id, ...my, hp: 100, alive: true, score: 0, kos: 0, stars: 0, pos: new THREE.Vector3(x, world.groundY(x, z), z), yaw: 0, speed: 0, vy: 0, air: false,
     veh: null, busy: false, aim: false, pitch: 0, fireT: 0, emote: 'wave', emoteT: 0, stepD: 0, anim: 'idle', nearCar: null, nearPed: -1, char: new Character(my.avatar, my.color) };
@@ -179,7 +188,7 @@ function start(n, r, url) {
   for (const d of r.damage) vehicles.setDamage(d, true);
   bindNet();
   link = location.origin + location.pathname + '?room=' + r.room + (url && url !== SERVER_URL ? '&server=' + encodeURIComponent(url) : '');
-  history.replaceState(null, '', link + (params.has('debug') ? '&debug' : '')); // Neuladen landet wieder im selben Raum
+  history.replaceState(null, '', link + ['debug', 'p2p', 'peer'].filter(k => params.has(k)).map(k => '&' + k + (params.get(k) ? '=' + params.get(k) : '')).join('')); // Neuladen landet wieder im selben Raum
   $('menu').classList.add('hidden'); $('hud').classList.remove('hidden'); $('roomCode').textContent = r.room;
   $('pause').querySelector('.settings-slot').append($('settings'));
   input.enabled = true; phase = 'play'; lock();
@@ -291,7 +300,12 @@ function bindNet() {
   net.on('emote', ({ id, e }) => hud.say(e ? '👎' : '👋', () => { const p = players.get(id); return p && head(p); }, 1.8));
   net.on('disconnect', (why) => {
     if (why === 'io client disconnect') return; // selbst verlassen
-    try { sessionStorage.setItem('ss_err', 'Verbindung zum Server verloren. Mit „Spielen“ kommst du zurück in den Raum.'); } catch { /* dann eben ohne Meldung */ }
+    try {
+      if (p2pMode) { // Gastgeber weg: der Spieler mit der kleinsten Nummer übernimmt den Raum, alle anderen kommen automatisch nach
+        const next = [me.id, ...players.keys()].filter(id => id !== hostId).sort((a, b) => a - b)[0];
+        sessionStorage.setItem('ss_migrate', JSON.stringify({ code: roomCode, host: next === me.id, t: Date.now(), own, money, x: me.pos.x, z: me.pos.z }));
+      } else sessionStorage.setItem('ss_err', 'Verbindung zum Server verloren. Mit „Spielen“ kommst du zurück in den Raum.');
+    } catch { /* dann eben ohne Meldung */ }
     location.reload();
   });
 }

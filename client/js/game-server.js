@@ -2,17 +2,18 @@
 // und ohne Server im Browser des Raum-Gastgebers (p2p.js); beide reichen ein Socket.io-artiges `io` herein.
 import {
   MAX_PLAYERS, TICK_HZ, PED_HZ, A, AIM_FLAG, AVATARS, COPS, WEAPONS, VEHICLES, VEHICLE_TYPES, CAR_HIT_DAMAGE, GRID, CELL, HALF, BEACH, LANE, ROAD,
-  buildCity, sidewalkLoop, node, roadOpen, rng, START_MONEY, KO_MONEY, JUMP_MONEY, PICKUP_RESPAWN, RIVER, JUMPS, roadCenter, clamp, pushOut, sanitizeName, sanitizeRoom,
+  buildCity, sidewalkLoop, node, roadOpen, rng, START_MONEY, KO_MONEY, JUMP_MONEY, PICKUP_RESPAWN, RIVER, JUMPS, roadCenter, localPoint, clamp, pushOut, sanitizeName, sanitizeRoom,
 } from './shared.js';
 
 // `io` kommt per startGame(); bis dahin merkt sich der Platzhalter nur den Verbindungs-Handler
-let onConnection = null, io = { on: (ev, fn) => { onConnection = fn; } };
-export function startGame(server) { io = server; server.on('connection', onConnection); return setInterval(tick, 1000 / TICK_HZ); }
+let onConnection = null, io = { on: (ev, fn) => { onConnection = fn; } }, trustMigrate = false;
+// migrate = Browser-Gastgeber: nach einem Gastgeber-Wechsel bringen Spieler Ort, Waffen und Geld mit (der Gastgeber ist dort ohnehin die Instanz)
+export function startGame(server, { migrate = false } = {}) { io = server; trustMigrate = migrate; server.on('connection', onConnection); return setInterval(tick, 1000 / TICK_HZ); }
 
 const IDLES = [A.idle, A.look, A.phone, A.photo, A.talk, A.laugh, A.dance, A.clap]; // Passanten stehen nicht nur herum
 const SEED = 1337;           // alle Räume nutzen dieselbe Stadt
-const PEDS_PER_ROOM = 70;
-const TRAFFIC_PER_ROOM = 12;
+const PEDS_PER_ROOM = 90;
+const TRAFFIC_PER_ROOM = 18;
 const RESPAWN_MS = 4000;
 const CRASH = 1.3;           // Schadenspunkte am Auto je m/s plötzlichem Tempoverlust
 const FUSE_MS = 4500;        // brennendes Auto explodiert nach dieser Zeit
@@ -116,9 +117,17 @@ function createRoom(code) {
     room.peds.push({ id: k, avatar: Math.floor(rand() * AVATARS.length), block, s: rand() * 4 * 44, dir: rand() < 0.5 ? 1 : -1,
       base: 1.0 + rand() * 0.35, state: 'walk', timer: 3 + rand() * 10, x: 0, z: 0, yaw: 0, anim: A.walk, fleeFrom: null });
   }
+  // Verkäufer hinter den Tresen (stehen, schauen zur Tür bzw. in den Raum)
+  for (const b of city.buildings) {
+    const it = b.items?.find(i => ['counter', 'bar', 'desk', 'glass'].includes(i[0]));
+    if (!it) continue;
+    const bar = it[0] === 'bar', [x, z] = localPoint(b, bar ? it[1] + 1 : it[1], bar ? it[2] : it[2] - 1);
+    room.peds.push({ id: room.peds.length, avatar: Math.floor(rand() * AVATARS.length), clerk: true, state: 'clerk', timer: 0, x, z, yaw: b.rot - (bar ? Math.PI / 2 : 0), anim: A.idle });
+  }
   rooms.set(code, room);
   return room;
 }
+const CROSS = [[[-1, 0, 1], [0, -1, 3]], [[1, 0, 0], [0, -1, 2]], [[1, 0, 3], [0, 1, 1]], [[-1, 0, 2], [0, 1, 0]]]; // je Ecke: Nachbarblock (dx, dz) und dortige Ecke
 
 // hp/dz/st = Zustand: Energie, Schaden je Zone [vorn, hinten, links, rechts], 0 heil · 1 brennt · 2 Wrack
 function makeVehicle(id, type, x, z, yaw) {
@@ -174,6 +183,7 @@ function stepTraffic(room, v, dt) {
   let car = false, person = false;
   for (const o of room.vehicles) if (o !== v && ahead(o.x, o.z, 9)) { car = true; break; }
   for (const p of room.players.values()) if (p.alive && !p.veh && ahead(p.x, p.z, 7)) { person = true; break; }
+  if (!person) for (const p of room.peds) if (p.state === 'cross' && ahead(p.x, p.z, 7)) { person = true; break; } // Fußgänger auf dem Zebrastreifen
   T.wait = car ? T.wait + dt : 0; // steht dauerhaft ein Auto im Weg (verlassen, Stau über Kreuz), nach 5 s vorbeischieben
   const blocked = person || (car && T.wait < 5);
   T.v = blocked ? Math.max(0, (T.v || 0) - 20 * dt) : Math.min(T.speed, (T.v || 0) + 4 * dt);
@@ -189,9 +199,16 @@ function stepTraffic(room, v, dt) {
 }
 
 function stepPed(room, p, dt) {
-  const b = city.blocks[p.block], loop = sidewalkLoop(b);
-  const per = (b.x1 - b.x0 - 4) * 4; // Umfang des Gehweg-Rundwegs (quadratischer Block)
   p.timer -= dt;
+  if (p.clerk) { p.anim = p.state === 'down' ? A.down : p.state === 'react' || p.state === 'flee' ? A.scared : p.state === 'greet' ? A.wave : A.idle; if (p.state !== 'clerk' && p.timer <= 0) p.state = 'clerk'; return; }
+  const b = city.blocks[p.block], loop = sidewalkLoop(b);
+  const per = (b.x1 - b.x0 - 4) * 4, side = per / 4; // Umfang des Gehweg-Rundwegs (quadratischer Block)
+  if (p.state === 'cross') { // über den Zebrastreifen zum Nachbarblock
+    const [tx, tz] = p.to, dx = tx - p.x, dz = tz - p.z, d = Math.hypot(dx, dz), st = p.base * 1.15 * dt;
+    p.anim = A.walk; p.yaw = Math.atan2(dx, dz);
+    if (d <= st) { p.block = p.nb; p.s = p.nk * side; p.state = 'walk'; p.x = tx; p.z = tz; } else { p.x += dx / d * st; p.z += dz / d * st; }
+    return;
+  }
   let speed = 0;
   switch (p.state) {
     case 'walk': speed = p.base; p.anim = A.walk;
@@ -210,7 +227,16 @@ function stepPed(room, p, dt) {
       if (p.timer <= 0) { p.state = 'walk'; p.timer = 5; }
       break;
   }
+  const s0 = p.s;
   p.s = ((p.s + p.dir * speed * dt) % per + per) % per;
+  if (p.state === 'walk' && Math.floor(s0 / side) !== Math.floor(p.s / side) && room.rand() < 0.35) { // an einer Ecke manchmal die Straße überqueren
+    const k = (p.dir > 0 ? Math.floor(p.s / side) : Math.floor(s0 / side)) % 4, [dx, dz, nk] = CROSS[k][room.rand() < 0.5 ? 0 : 1];
+    const bx = b.bx + dx, bz = b.bz + dz, nb = bx * GRID + bz;
+    if (bx >= 0 && bz >= 0 && bx < GRID && bz < GRID && city.blocks[nb].type !== 'river') {
+      Object.assign(p, { state: 'cross', to: sidewalkLoop(city.blocks[nb])[nk], nb, nk, s: k * side }); [p.x, p.z] = loop[k];
+      return;
+    }
+  }
   const [x, z] = pedPos(loop, per, p.s);
   if (speed > 0) { const dx = x - p.x, dz = z - p.z; if (Math.abs(dx) + Math.abs(dz) > 1e-4) p.yaw = Math.atan2(dx, dz); }
   if (p.state === 'greet' && p.faceTo) p.yaw = Math.atan2(p.faceTo[0] - x, p.faceTo[1] - z);
@@ -225,7 +251,7 @@ function pedPos(loop, per, s) {
 
 function scarePeds(room, x, z, radius) {
   for (const p of room.peds) {
-    if (p.state === 'down' || p.state === 'react') continue;
+    if (p.state === 'down' || p.state === 'react' || p.state === 'cross') continue;
     if (Math.hypot(p.x - x, p.z - z) < radius) { p.state = 'flee'; p.timer = 5 + room.rand() * 3; p.fleeFrom = [x, z]; }
   }
 }
@@ -251,13 +277,16 @@ io.on('connection', (socket) => {
       x, y: 0, z, yaw: 0, anim: A.idle, veh: 0, weap: 0, pitch: 0, hp: 100, alive: true, score: 0, kos: 0, hitLog: [], lastSt: 0,
       ammo: WEAPONS.map(w => w.mag), reloadW: -1, reloadAt: 0, credit: 2, shotT: 0, shots: [], budget: 12, moveT: Date.now(), fixT: 0, wanted: 0, seenT: 0, starsSent: 0, copT: 0,
       own: WEAPONS.map((w, i) => i === 0), money: START_MONEY, jumpT: 0 };
+    const m = trustMigrate && data.migrate;
+    if (m && finite(m.x, m.z, m.money) && !pushOut(city.solids, m.x, m.z, 0.4) && Math.abs(m.x) < HALF + BEACH && Math.abs(m.z) < HALF && Array.isArray(m.own))
+      Object.assign(me, { x: m.x, z: m.z, money: clamp(m.money | 0, 0, 1e7), own: WEAPONS.map((w, i) => !i || !!m.own[i]) });
     room.players.set(socket.id, me);
     room.emptySince = 0;
     socket.join(code);
     socket.to(code).emit('pjoin', publicPlayer(me));
-    ack({ id: me.id, room: code, seed: SEED, spawn: [x, z], serverTime: Date.now(), start: room.start,
+    ack({ id: me.id, room: code, seed: SEED, serverTime: Date.now(), start: room.start,
       players: [...room.players.values()].map(publicPlayer), vehicles: room.vehicles.map(vehState),
-      damage: room.vehicles.filter(v => v.hp < 100 || v.st).map(dmgState), own: me.own, money: me.money, pickups: pickupState(room) });
+      damage: room.vehicles.filter(v => v.hp < 100 || v.st).map(dmgState), own: me.own, money: me.money, pickups: pickupState(room), spawn: [me.x, me.z], hostId: [...room.players.values()].find(p => p.sid === 'local')?.id });
   });
 
   // eigener Spielerzustand: [x,y,z,yaw,anim,weap,pitch]

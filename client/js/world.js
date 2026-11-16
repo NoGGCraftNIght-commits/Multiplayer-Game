@@ -347,6 +347,14 @@ export class World {
     lamps.forEach(([x, z], i) => { const m = tmpM.makeTranslation(x, this.groundY(x, z) > 0.1 ? SLAB : 0, z); poleMesh.setMatrixAt(i, m); headMesh.setMatrixAt(i, m); });
     poleMesh.castShadow = true; poleMesh.computeBoundingSphere(); headMesh.computeBoundingSphere(); scene.add(poleMesh, headMesh);
     this.lamps = lamps;
+    // Lichtkegel auf dem Boden unter jeder Laterne (nachts, ein Draw Call)
+    const pc = document.createElement('canvas'); pc.width = pc.height = 64;
+    const pg = pc.getContext('2d'), grad = pg.createRadialGradient(32, 32, 0, 32, 32, 32); grad.addColorStop(0, 'rgba(255,255,255,1)'); grad.addColorStop(1, 'rgba(255,255,255,0)');
+    pg.fillStyle = grad; pg.fillRect(0, 0, 64, 64);
+    this.poolMat = new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(pc), color: 0xffc078, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending });
+    this.pools = new THREE.InstancedMesh(new THREE.PlaneGeometry(9, 9).rotateX(-Math.PI / 2), this.poolMat, lamps.length);
+    lamps.forEach(([x, z], i) => this.pools.setMatrixAt(i, tmpM.makeTranslation(x, this.groundY(x, z) + 0.05, z)));
+    this.pools.computeBoundingSphere(); scene.add(this.pools);
 
     // Ufermauer am Stadtrand
     const wallMat = stdMat({ color: 0xd9d3c7, roughness: 0.8 });
@@ -526,6 +534,7 @@ export class World {
     this.stars.material.opacity = clamp((0.6 - day) * 1.6, 0, 1);
     this.stars.position.copy(this.camera.position);
     this.lampMat.emissiveIntensity = 0.4 + 4.5 * dark;
+    this.poolMat.opacity = 0.6 * dark; this.pools.visible = dark > 0.05;
     if (this.bloom) { this.bloom.strength = 0.36 * dark * dark; this.bloom.enabled = this.bloom.strength > 0.02; } // tagsüber aus: sonst überstrahlt der helle Himmel alle Kanten
     this.neonMat.color.setScalar(0.3 + 2.4 * dark);
     const lit = clamp((0.6 - day) * 2.2, 0, 1) * 1.25; // Fenster und Ladenschilder gehen in der Dämmerung an
