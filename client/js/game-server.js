@@ -2,7 +2,7 @@
 // und ohne Server im Browser des Raum-Gastgebers (p2p.js); beide reichen ein Socket.io-artiges `io` herein.
 import {
   MAX_PLAYERS, TICK_HZ, PED_HZ, A, AIM_FLAG, AVATARS, COPS, WEAPONS, VEHICLES, VEHICLE_TYPES, CAR_HIT_DAMAGE, GRID, CELL, HALF, BEACH, LANE, ROAD,
-  buildCity, sidewalkLoop, node, roadOpen, rng, SPRAYS, SPRAY_COST, inSpray, START_MONEY, KO_MONEY, JUMP_MONEY, PICKUP_RESPAWN, RIVER, JUMPS, roadCenter, localPoint, clamp, pushOut, sanitizeName, sanitizeRoom,
+  buildCity, sidewalkLoop, node, roadOpen, rng, SPRAYS, SPRAY_COST, inSpray, RESPAWN, DEATH_FEE, START_MONEY, KO_MONEY, JUMP_MONEY, PICKUP_RESPAWN, RIVER, JUMPS, roadCenter, localPoint, clamp, pushOut, sanitizeName, sanitizeRoom,
 } from './shared.js';
 
 // `io` kommt per startGame(); bis dahin merkt sich der Platzhalter nur den Verbindungs-Handler
@@ -22,7 +22,6 @@ const COP_SLOTS = 8;         // höchstens so viele Wachen pro Raum
 const WANT = [0, 2, 3, 4, 5, 6, 7]; // Wachen zu Fuß, die ein Spieler mit n Sternen auf sich zieht; ab 3 Sternen kommt der Hubschrauber
 const CAR_COPS = [0, 1, 1, 2, 2, 3, 3]; // Streifenwagen je Sternzahl
 const CRUISERS = 3;          // zusätzliche Streifenwagen im Verkehr (fahren Streife, bis jemand gesucht wird)
-const BUST_FINE = 100;       // Festnahme: Waffen weg und diese Strafe
 
 const city = buildCity(SEED);
 const rooms = new Map();
@@ -279,7 +278,7 @@ io.on('connection', (socket) => {
     const color = /^#[0-9a-f]{6}$/i.test(data.color) ? data.color : '#ff5aa0';
     const [x, z] = randomSidewalkSpot();
     me = { id: room.nextPid++, sid: socket.id, name: sanitizeName(data.name), avatar: clamp(data.avatar | 0, 0, AVATARS.length - 1), color,
-      x, y: 0, z, yaw: 0, anim: A.idle, veh: 0, weap: 0, pitch: 0, hp: 100, alive: true, score: 0, kos: 0, hitLog: [], lastSt: 0,
+      x, y: 0, z, yaw: 0, anim: A.idle, veh: 0, weap: 0, pitch: 0, hp: 100, armor: 0, alive: true, score: 0, kos: 0, hitLog: [], lastSt: 0,
       ammo: WEAPONS.map(w => w.mag), reloadW: -1, reloadAt: 0, credit: 2, shotT: 0, shots: [], budget: 12, moveT: Date.now(), fixT: 0, wanted: 0, seenT: 0, starsSent: 0, copT: 0,
       own: WEAPONS.map((w, i) => i === 0), money: START_MONEY, jumpT: 0 };
     const m = trustMigrate && data.migrate;
@@ -385,10 +384,14 @@ io.on('connection', (socket) => {
   // Waffe aufheben: Server prüft Abstand (auch in der Höhe: Brücke über dem Flussbett) und ob der Fundort frei ist
   socket.on('pick', (i) => {
     const q = city.pickups[i | 0], now = Date.now();
-    if (!me || !me.alive || me.veh || !q || room.pickups[i | 0] > now || me.own[q.w] || Math.hypot(me.x - q.x, me.z - q.z) > 2.5 || Math.abs(me.y - q.y) > 1.6) return;
-    room.pickups[i | 0] = now + PICKUP_RESPAWN; me.own[q.w] = true; me.ammo[q.w] = WEAPONS[q.w].mag;
+    if (!me || !me.alive || me.veh || !q || room.pickups[i | 0] > now || Math.hypot(me.x - q.x, me.z - q.z) > 2.5 || Math.abs(me.y - q.y) > 1.6) return;
+    if (q.k === 'hp') { if (me.hp >= 100) return; me.hp = 100; } // Herz: volle Energie
+    else if (q.k === 'armor') { if (me.armor >= 100) return; me.armor = 100; } // Schutzweste
+    else if (q.k === 'bribe') { if (!stars(me)) return; me.wanted = Math.max(0, me.wanted - 1); } // Bestechung: ein Stern weniger
+    else { if (me.own[q.w]) return; me.own[q.w] = true; me.ammo[q.w] = WEAPONS[q.w].mag; sendOwn(me); }
+    room.pickups[i | 0] = now + PICKUP_RESPAWN;
     io.to(room.code).emit('pickup', { i: i | 0, left: PICKUP_RESPAWN, by: me.id, w: q.w });
-    sendOwn(me);
+    if (q.k === 'hp' || q.k === 'armor') io.to(room.code).emit('hp', { id: me.id, hp: me.hp, armor: me.armor, by: 0, w: -9 });
   });
   // Kaufen im Waffenladen: am Tresen stehen, genug Geld, Waffe noch nicht im Besitz
   socket.on('buy', (wi, ack) => {
@@ -483,28 +486,31 @@ function sendOwn(p) { io.to(p.sid).emit('own', { own: p.own, money: p.money }); 
 
 // Schaden anwenden. by = Verursacher oder null; w = Waffe, -1 Auto, -2 Explosion, -3 Stadtwache
 function hurt(room, target, dmg, by, w) {
+  const absorb = Math.min(target.armor, dmg); target.armor -= absorb; dmg -= absorb; // Weste fängt zuerst ab
   target.hp = Math.max(0, target.hp - dmg);
-  io.to(room.code).emit('hp', { id: target.id, hp: target.hp, by: by?.id || 0, w });
+  io.to(room.code).emit('hp', { id: target.id, hp: target.hp, armor: target.armor, by: by?.id || 0, w });
   if (target.hp <= 0) knockOut(room, target, by, w);
 }
 
 // Neustart nach K.o. oder Festnahme
-function respawnLater(room, target) {
+function respawnLater(room, target, [sx, sz]) {
   setTimeout(() => {
     if (!room.players.has(target.sid)) return;
-    const [x, z] = randomSidewalkSpot();
+    const x = sx + Math.random() * 8 - 4, z = sz;
     Object.assign(target, { alive: true, hp: 100, x, y: 0, z, anim: A.idle, ammo: WEAPONS.map(q => q.mag), reloadW: -1, budget: 12 });
     io.to(room.code).emit('respawn', { id: target.id, x, z });
   }, RESPAWN_MS);
 }
 
-// Festnahme: Waffen (außer Pistole) weg, Geldstrafe, Sterne weg
+// K.o. oder Festnahme kostet wie im Vorbild: Waffen (außer Pistole), Weste und eine Gebühr
+function penalty(p) { p.own = WEAPONS.map((w, i) => i === 0); p.armor = 0; p.money = Math.max(0, p.money - DEATH_FEE); sendOwn(p); }
+// Festnahme: Sterne weg, Neustart an der Polizeiwache
 function bust(room, p) {
   p.alive = false; p.anim = A.scared; p.wanted = 0; p.cuff = 0;
   if (p.veh) releaseVehicle(room, p);
-  p.own = WEAPONS.map((w, i) => i === 0); p.money = Math.max(0, p.money - BUST_FINE); sendOwn(p);
+  penalty(p);
   io.to(room.code).emit('ko', { id: p.id, by: 0, w: -4, score: 0, kos: p.kos });
-  respawnLater(room, p);
+  respawnLater(room, p, RESPAWN.police);
 }
 
 function knockOut(room, target, by, w) {
@@ -512,9 +518,10 @@ function knockOut(room, target, by, w) {
   if (by === target) by = null;
   if (by) { by.score++; by.money += KO_MONEY; sendOwn(by); }
   if (target.veh) releaseVehicle(room, target);
+  penalty(target);
   io.to(room.code).emit('ko', { id: target.id, by: by?.id || 0, w, score: by?.score || 0, kos: target.kos });
   scarePeds(room, target.x, target.z, 14);
-  respawnLater(room, target);
+  respawnLater(room, target, RESPAWN.hospital);
 }
 
 // ---------- Autoschaden ----------

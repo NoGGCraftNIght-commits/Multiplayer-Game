@@ -98,6 +98,9 @@ export function riverY(x, z) { // Kanalprofil ohne Brücken, 0 = Straßenniveau
   if (x < -HALF || x > HALF || z <= RIVER.z0 || z >= RIVER.z1) return 0;
   return Math.max(RIVER.bed, Math.min(z - RIVER.z0, RIVER.z1 - z) * RIVER.bed / RIVER.slope);
 }
+// Neustart: nach K.o. am Krankenhaus, nach Festnahme an der Polizeiwache (Gehweg vor dem Block)
+export const RESPAWN = { hospital: [blockMin(3) + BLOCK / 2, blockMin(2) + BLOCK - WALK / 2], police: [blockMin(5) + BLOCK / 2, blockMin(3) + BLOCK - WALK / 2] };
+export const DEATH_FEE = 100; // Krankenhaus bzw. Strafe nach Festnahme
 // Lackierereien: Durchfahrt-Portal über einem Straßenstück [i, j, Richtung]. Durchfahren mit Fahndung oder Schaden:
 // Sterne weg, Auto heil, neue Farbe, kostet SPRAY_COST
 export const SPRAY_COST = 100;
@@ -126,7 +129,7 @@ export function buildCity(seed = 1337) {
     if (type === 'park') { // Kreuzwege zu einem runden Platz mit Brunnen oder Teich, Bäume in den vier Vierteln
       const cx = ix0 + inner / 2, cz = iz0 + inner / 2;
       parks.push({ x: cx, z: cz, pond: (bx + bz) % 2 === 1 });
-      pickups.push({ x: cx, z: cz - 10, y: SLAB_H, w: 1 });
+      pickups.push({ x: cx, z: cz - 10, y: SLAB_H, w: 1 }, { x: cx, z: cz + 10, y: SLAB_H, k: 'hp' });
       for (let k = 0; k < 10; k++) { const a = r() * 6.28, d = 12.5 + r() * 5; props.push({ kind: 'flower_red', x: cx + Math.cos(a) * d, z: cz + Math.sin(a) * d, rot: r() * 6.28, s: 2 + r(), solid: false }); }
       for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) for (let k = 0; k < 6; k++) {
         const dx = 3.4 + r() * 14, dz = 3.4 + r() * 14, tree = k < 4;
@@ -156,6 +159,7 @@ export function buildCity(seed = 1337) {
         buildings.push({ style, floors, x: ix0 + lot * lx + lot / 2, z: iz0 + lot * lz + lot / 2, w, d: dd, rot, room });
       }
       if (r() < 0.35) pickups.push({ x: ix0 + inner / 2, z: iz0 + inner / 2, y: SLAB_H, w: 1 + Math.floor(r() * 2) }); // Waffe in der Gasse zwischen den Häusern
+      else if ((bx * 3 + bz) % 4 === 0) pickups.push({ x: ix0 + inner / 2, z: iz0 + inner / 2, y: SLAB_H, k: 'armor' }); // sonst manchmal eine Schutzweste
     }
     // Straßenbäume an den Gehweg-Ecken
     for (const [px, pz] of [[x0 + 2, z0 + 2], [x1 - 2, z0 + 2], [x0 + 2, z1 - 2], [x1 - 2, z1 - 2]]) {
@@ -181,6 +185,9 @@ export function buildCity(seed = 1337) {
     const b = buildings.filter(q => q.room && q.room !== 'lobby').sort((p, q) => Math.hypot(p.x - ax, p.z - az) - Math.hypot(q.x - ax, q.z - az))[0];
     if (b) b.room = 'waffen';
   }
+  // Bestechungs-Sterne an Gehweg-Ecken (je einer weniger Fahndung), Herz vor dem Krankenhaus
+  for (const b of blocks) if (b.type !== 'river' && (b.bx + 2 * b.bz) % 5 === 2) pickups.push({ x: b.x0 + 2, z: b.z0 + 2, y: SLAB_H, k: 'bribe' });
+  pickups.push({ x: RESPAWN.hospital[0] + 6, z: RESPAWN.hospital[1], y: SLAB_H, k: 'hp' });
   // Fundorte: unter zwei Brücken im Flussbett, am Strand
   pickups.push({ x: BRIDGES[1], z: (RIVER.z0 + RIVER.z1) / 2, y: RIVER.bed, w: 2 }, { x: BRIDGES[BRIDGES.length - 2], z: (RIVER.z0 + RIVER.z1) / 2, y: RIVER.bed, w: 3 },
     { x: HALF + 30, z: -150, y: 0, w: 2 }, { x: HALF + 30, z: 120, y: 0, w: 1 });

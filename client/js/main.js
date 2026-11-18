@@ -11,7 +11,7 @@ import { Input } from './input.js';
 import { Hud } from './hud.js';
 import { makeHeli } from './heli.js';
 import { Net, Interp, RENDER_DELAY } from './net.js';
-import { MAX_PLAYERS, A, AIM_FLAG, AVATARS, COPS, WEAPONS, DAY_LENGTH, TICK_HZ, PED_HZ, HALF, BEACH, RIVER, SPRAYS, SPRAY_COST, buildCity, pushOut, clamp, sanitizeName, sanitizeRoom } from './shared.js';
+import { MAX_PLAYERS, A, AIM_FLAG, AVATARS, COPS, WEAPONS, DAY_LENGTH, TICK_HZ, PED_HZ, HALF, BEACH, RIVER, SPRAYS, SPRAY_COST, RESPAWN, DEATH_FEE, buildCity, pushOut, clamp, sanitizeName, sanitizeRoom } from './shared.js';
 
 // Grand Tor Auto – Spielschleife: Menü, Beitritt, eigene Figur, Kamera, Fahren, Netz, HUD.
 const $ = (id) => document.getElementById(id);
@@ -40,7 +40,7 @@ const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _h = new THREE.Vector3
 const head = (o) => _h.set(o.pos.x, o.pos.y + (o.veh ? 2.5 : 2.05), o.pos.z);
 
 const canvas = $('game'), ui = {};
-for (const id of ['hpbar', 'carbar', 'wicon', 'wheel', 'wname', 'ammo', 'weapon', 'speed', 'kmh', 'vname', 'crosshair', 'hitmarker', 'hint', 'ko', 'kotext', 'vignette', 'scoreboard', 'clock', 'playerCount', 'tAct', 'tHorn', 'tFire', 'tAim', 'tWeapon', 'cash', 'shop', 'shopList']) ui[id] = $(id);
+for (const id of ['hpbar', 'armbar', 'carbar', 'wicon', 'wheel', 'wname', 'ammo', 'weapon', 'speed', 'kmh', 'vname', 'crosshair', 'hitmarker', 'hint', 'ko', 'kotext', 'vignette', 'scoreboard', 'clock', 'playerCount', 'tAct', 'tHorn', 'tFire', 'tAim', 'tWeapon', 'cash', 'shop', 'shopList']) ui[id] = $(id);
 const my = { name: '', avatar: 0, color: COLORS[0][0] };
 const players = new Map(), joining = new Set(), peds = [], pedBuf = new Interp();
 // Stadtwache: 8 feste Plätze; ohne Wachen/Hubschrauber schickt der Server nichts -> Leerstand einsetzen
@@ -171,14 +171,15 @@ function start(n, r, url) {
   if (r.seed !== city.seed) throw new Error('Server und Spiel haben verschiedene Versionen.');
   net = n; roomStart = r.start; net.sync(r.serverTime); hostId = r.hostId; roomCode = r.room;
   const [x, z] = r.spawn;
-  me = { id: r.id, ...my, hp: 100, alive: true, score: 0, kos: 0, stars: 0, pos: new THREE.Vector3(x, world.groundY(x, z), z), yaw: 0, speed: 0, vy: 0, air: false,
+  me = { id: r.id, ...my, hp: 100, armor: 0, alive: true, score: 0, kos: 0, stars: 0, pos: new THREE.Vector3(x, world.groundY(x, z), z), yaw: 0, speed: 0, vy: 0, air: false,
     veh: null, busy: false, aim: false, pitch: 0, fireT: 0, emote: 'wave', emoteT: 0, stepD: 0, anim: 'idle', nearCar: null, nearPed: -1, char: new Character(my.avatar, my.color) };
   me.char.setWeapon(0); world.scene.add(me.char.root); gunIcon(0, ui.wicon);
   own = r.own; money = r.money; renderWheel(); txt(ui.cash, cash(money));
-  // Fundorte: Waffe dreht sich über einem leuchtenden Ring (nur in der Nähe sichtbar)
-  const ring = new THREE.Mesh(new THREE.RingGeometry(0.45, 0.62, 28).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.75, depthWrite: false }));
+  // Fundorte: Waffe, Herz, Weste oder Stern dreht sich über einem leuchtenden Ring (nur in der Nähe sichtbar)
+  const ringGeo = new THREE.RingGeometry(0.45, 0.62, 28).rotateX(-Math.PI / 2), RING = { hp: 0xff3b3b, armor: 0x5aa0ff, bribe: 0xffffff };
   pickups = city.pickups.map((q, i) => {
-    const g = new THREE.Group(), gun = makeBlaster(q.w); gun.scale.setScalar(1.7); gun.position.y = 0.9; g.add(gun, ring.clone());
+    const g = new THREE.Group(), gun = q.k ? pickupItem(q.k) : makeBlaster(q.w); if (!q.k) gun.scale.setScalar(1.7); gun.position.y = 0.9;
+    g.add(gun, new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: RING[q.k] ?? 0xffd23f, transparent: true, opacity: 0.75, depthWrite: false })));
     g.position.set(q.x, q.y + 0.03, q.z); g.visible = false; world.scene.add(g);
     return { ...q, i, g, gun, until: performance.now() + (r.pickups[i] || 0), tryT: 0 };
   });
@@ -270,9 +271,11 @@ function bindNet() {
   net.on('stunt', (m) => { hud.feed(`Sprung geschafft! +${cash(m)}`); audio.play('kill', { vol: 0.5 }); });
   net.on('fix', ([x, z]) => { if (!me.veh) { me.pos.x = x; me.pos.z = z; } });
   net.on('vfix', (s) => vehicles.fix(s));
-  net.on('hp', ({ id, hp, by, w }) => {
+  net.on('hp', ({ id, hp, armor, by, w }) => {
     const o = who(id); if (!o) return;
     o.hp = hp;
+    if (o === me && armor != null) me.armor = armor;
+    if (o === me && w === -9) { audio.play('coin', { vol: 0.6 }); return; } // Herz oder Weste aufgehoben
     if (o === me) { flash(w === -2 ? '#ff8a1f' : who(by)?.color || '#35c2ff'); audio.play('hurt', { vol: 0.7 }); }
   });
   net.on('ko', ({ id, by, w, score, kos }) => {
@@ -282,7 +285,7 @@ function bindNet() {
     hud.feed(w === -2 ? `${bn} ist mit einem Auto in die Luft geflogen` : w === -4 ? `${bn} wurde verhaftet` : w === -3 ? `${bn} wurde von der Polizei erschossen` : `${a?.name ?? 'Jemand'} hat ${bn} ${WEAPONS[w] ? `ausgeschaltet (${WEAPONS[w].name})` : 'umgefahren'}`);
     if (b === me) {
       me.alive = false; koUntil = performance.now() + 4000; ui.ko.classList.remove('hidden'); document.body.classList.add('ko'); audio.play('kill');
-      koBy = w === -4 ? 'Waffen weg, 100 $ Strafe' : w === -2 ? 'durch eine Explosion' : w === -3 ? 'von der Polizei' : `von ${a?.name ?? 'jemandem'}`;
+      koBy = w === -4 ? `Waffen weg, ${DEATH_FEE} $ Strafe` : `${w === -2 ? 'durch eine Explosion' : w === -3 ? 'von der Polizei' : `von ${a?.name ?? 'jemandem'}`} · Krankenhaus: Waffen weg, ${DEATH_FEE} $`;
       txt(ui.ko.firstChild, w === -4 ? 'Verhaftet!' : 'Erledigt!');
     }
     else if (a === me) audio.play('coin', { vol: 0.8 });
@@ -291,7 +294,7 @@ function bindNet() {
     const o = who(id); if (!o) return;
     o.hp = 100; o.alive = true;
     if (o !== me) return o.buf.clear();
-    me.pos.set(x, world.groundY(x, z), z); me.air = false; ui.ko.classList.add('hidden'); document.body.classList.remove('ko');
+    me.pos.set(x, world.groundY(x, z), z); me.air = false; me.armor = 0; ui.ko.classList.add('hidden'); document.body.classList.remove('ko');
     combat.ammo = WEAPONS.map(w => w.mag); combat.reloadT = 0;
   });
   net.on('shoot', (s) => { // Schütze: Mitspieler oder Wache (negative Nummer)
@@ -646,6 +649,7 @@ function send(dt) {
 function drawHud(dt, now) {
   const v = me.veh, touch = input.mode === 'touch';
   ui.hpbar.style.width = me.hp + '%'; ui.hpbar.classList.toggle('low', me.hp < 25);
+  ui.armbar.style.width = me.armor + '%'; ui.armbar.parentNode.classList.toggle('hidden', !me.armor);
   ui.carbar.style.width = (v && !v.st ? v.hp : 0) + '%'; // blau = Zustand des Autos
   txt(ui.ammo, combat.reloadT > 0 ? 'lädt …' : `${combat.ammo[combat.weapon]} | ${combat.w.mag}`);
   ui.weapon.classList.toggle('hidden', !!v); ui.speed.classList.toggle('hidden', !v);
@@ -664,7 +668,8 @@ function drawHud(dt, now) {
   hud.update(world.camera);
   if ((slowT += dt) < 0.1) return; // Rest: 10x pro Sekunde reicht
   slowT = 0;
-  const marks = [...city.buildings.filter(b => b.buy).map(b => ({ x: b.buy[0], z: b.buy[1], c: '#ff8a1f', r: 5 })), ...pickups.filter(q => now >= q.until && !own[q.w]).map(q => ({ x: q.x, z: q.z, c: '#ffd23f', r: 2.6 })), ...SPRAYS.map(q => ({ x: q.x, z: q.z, c: '#ff5aa0', r: 5 }))];
+  const marks = [...city.buildings.filter(b => b.buy).map(b => ({ x: b.buy[0], z: b.buy[1], c: '#ff8a1f', r: 5 })), ...pickups.filter(q => now >= q.until && !q.k && !own[q.w]).map(q => ({ x: q.x, z: q.z, c: '#ffd23f', r: 2.6 })), ...SPRAYS.map(q => ({ x: q.x, z: q.z, c: '#ff5aa0', r: 5 })),
+    { x: RESPAWN.hospital[0], z: RESPAWN.hospital[1], c: '#ffffff', r: 5 }, { x: RESPAWN.police[0], z: RESPAWN.police[1], c: '#3d7bff', r: 5 }];
   hud.minimap(me.pos, v ? carYaw(v) : me.yaw, cam.yaw, [...players.values(), ...cops.filter(c => c.on)], vehicles.list, marks);
   const m = Math.floor(tod * 1440);
   txt(ui.clock, `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`);
@@ -673,6 +678,17 @@ function drawHud(dt, now) {
 }
 
 // ---------- Schleife ----------
+// Herz, Schutzweste, Bestechungs-Stern: einfache Formen aus Code
+function pickupItem(k) {
+  const sh = new THREE.Shape();
+  if (k === 'hp') { sh.moveTo(0, -0.28); sh.bezierCurveTo(-0.5, 0.05, -0.25, 0.42, 0, 0.18); sh.bezierCurveTo(0.25, 0.42, 0.5, 0.05, 0, -0.28); }
+  else if (k === 'bribe') for (let i = 0; i < 10; i++) { const a = i * Math.PI / 5 + Math.PI / 2, r = i % 2 ? 0.14 : 0.34; sh[i ? 'lineTo' : 'moveTo'](Math.cos(a) * r, Math.sin(a) * r); }
+  else { sh.moveTo(-0.24, -0.3); sh.lineTo(0.24, -0.3); sh.lineTo(0.24, 0.12); sh.lineTo(0.1, 0.3); sh.lineTo(0.04, 0.12); sh.lineTo(-0.04, 0.12); sh.lineTo(-0.1, 0.3); sh.lineTo(-0.24, 0.12); } // Weste mit Halsausschnitt
+  const geo = new THREE.ExtrudeGeometry(sh, { depth: k === 'armor' ? 0.14 : 0.08, bevelEnabled: true, bevelSize: 0.03, bevelThickness: 0.03, bevelSegments: 2 }).center();
+  const col = { hp: 0xe0222a, armor: 0x34465c, bribe: 0xffcf3a }[k];
+  return new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: col, emissive: col, emissiveIntensity: 0.35, roughness: 0.4, metalness: k === 'bribe' ? 0.7 : 0 }));
+}
+
 // Fundorte drehen, nur nahe zeigen; berühren -> Server fragen (der prüft Abstand und ob frei)
 function updatePickups(dt, now) {
   for (const q of pickups) {
@@ -680,7 +696,8 @@ function updatePickups(dt, now) {
     q.g.visible = free && d2 < 70 * 70;
     if (!q.g.visible) continue;
     q.gun.rotation.y += dt * 1.6; q.gun.position.y = 0.9 + Math.sin(now / 400) * 0.08;
-    if (d2 < 1.6 * 1.6 && Math.abs(me.pos.y - q.y) < 1.6 && !me.veh && me.alive && !own[q.w] && now - q.tryT > 600) { q.tryT = now; net.emit('pick', q.i); }
+    const want = q.k === 'hp' ? me.hp < 100 : q.k === 'armor' ? me.armor < 100 : q.k === 'bribe' ? me.stars > 0 : !own[q.w];
+    if (d2 < 1.6 * 1.6 && Math.abs(me.pos.y - q.y) < 1.6 && !me.veh && me.alive && want && now - q.tryT > 600) { q.tryT = now; net.emit('pick', q.i); }
   }
 }
 

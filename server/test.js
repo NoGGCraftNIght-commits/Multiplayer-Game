@@ -2,7 +2,7 @@
 // Aufbau per direktem Zugriff auf den Serverzustand (place), geprüft wird über das Netzprotokoll.
 import assert from 'node:assert/strict';
 import { io as connect } from 'socket.io-client';
-import { MAX_PLAYERS, WEAPONS, AVATARS, buildCity, node, RIVER, JUMPS, ROAD, roadCenter, riverY, pushOut, START_MONEY, SPRAYS, SPRAY_COST } from '../client/js/shared.js';
+import { MAX_PLAYERS, WEAPONS, AVATARS, buildCity, node, RIVER, JUMPS, ROAD, roadCenter, riverY, pushOut, START_MONEY, SPRAYS, SPRAY_COST, RESPAWN, DEATH_FEE } from '../client/js/shared.js';
 
 process.env.PORT ||= '3987';
 const { httpServer, io, rooms } = await import('./server.js');
@@ -191,6 +191,22 @@ assert.equal((await sprayed).ok, true);
 assert.deepEqual([pa.wanted, pa.money, car2.hp, car2.paint !== paint0], [0, 500 - SPRAY_COST, 100, true], 'Lackiererei: Sterne weg, Auto heil, neue Farbe');
 a.emit('exit'); await sleep(100);
 step('Streifenwagen, Festnahme, Lackiererei');
+
+// --- Herz heilt, Weste fängt Schaden ab, Stern senkt die Fahndung; K.o. kostet Waffen, Weste und Krankenhausgebühr
+const pickK = async (k) => { const i = city.pickups.findIndex(q => q.k === k), q = city.pickups[i]; room.pickups[i] = 0; place(pa, q.x, q.z); a.emit('pick', i); await sleep(150); };
+const city = buildCity();
+pa.hp = 40; await pickK('hp'); assert.equal(pa.hp, 100, 'Herz heilt');
+await pickK('armor'); assert.equal(pa.armor, 100, 'Weste');
+Object.assign(pa, { wanted: 2.5, seenT: Date.now() }); await pickK('bribe'); assert.equal(Math.floor(pa.wanted), 1, 'Bestechung: ein Stern weniger');
+pa.wanted = 0; place(pa, X, Z); place(pb, X + 3, Z);
+const shootA = () => { b.emit('shoot', { w: 0, o: [X + 3, 1.4, Z], d: [-1, 0, 0], seed: 1 }); b.emit('hit', { t: 'p', id: ra.id, w: 0 }); };
+shootA(); await sleep(150);
+assert.deepEqual([pa.hp, pa.armor], [100, 100 - WEAPONS[0].damage], 'Weste fängt den Treffer ab');
+Object.assign(pa, { armor: 0, hp: 1, money: 300 }); pa.own[2] = true; await sleep(300);
+const back2 = once(a, 'respawn', m => m.id === ra.id); shootA();
+const r2 = await back2;
+assert.deepEqual([pa.own[2], pa.money, Math.abs(r2.z - RESPAWN.hospital[1]) < 1 && Math.abs(r2.x - RESPAWN.hospital[0]) < 5], [false, 300 - DEATH_FEE, true], 'K.o.: Waffen weg, Gebühr, Krankenhaus');
+step('Pickups, Weste, Krankenhaus');
 
 // --- Verkehr fließt (bleibt nicht hinter geparkten Autos hängen)
 const traffic = room.vehicles.filter(q => q.traffic), from = traffic.map(q => [q.x, q.z]);

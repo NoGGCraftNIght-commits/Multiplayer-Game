@@ -10,7 +10,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { assets } from './assets.js';
 import { makeBuildings } from './buildings.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { GRID, BLOCK, ROAD, WALK, CELL, SIZE, HALF, BEACH, RIVER, BRIDGES, BRIDGE_HALF, JUMPS, RIVER_ROW, blockMin, roadCenter, riverY, rampParts, localPoint, SPRAYS } from './shared.js';
+import { GRID, BLOCK, ROAD, WALK, CELL, SIZE, HALF, BEACH, RIVER, BRIDGES, BRIDGE_HALF, JUMPS, RIVER_ROW, blockMin, roadCenter, riverY, rampParts, localPoint, SPRAYS, RESPAWN } from './shared.js';
 
 export const SLAB = 0.14; // Gehweghöhe (Bordstein)
 
@@ -294,6 +294,19 @@ export class World {
     for (const q of SPRAYS) {
       const g = new THREE.Group(); g.position.set(q.x, 0, q.z); if (q.along === 'z') g.rotation.y = Math.PI / 2;
       const f = new THREE.Mesh(frame, frameMat), sign = new THREE.Mesh(signGeo, signMat); f.castShadow = true; g.add(f, sign); scene.add(g);
+    }
+    // Krankenhaus und Polizeiwache: Leuchtschild auf zwei Pfosten am Gehweg (dort startet man nach K.o. bzw. Festnahme)
+    for (const [[x, z], text, col, mark] of [[RESPAWN.hospital, 'KRANKENHAUS', '#e0222a', '✚'], [RESPAWN.police, 'POLIZEI', '#3d7bff', '★']]) {
+      const c = Object.assign(document.createElement('canvas'), { width: 512, height: 128 }), g = c.getContext('2d');
+      g.fillStyle = '#f4f4f0'; g.fillRect(0, 0, 512, 128); g.fillStyle = col; g.fillRect(0, 0, 128, 128);
+      g.font = 'bold 84px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#fff'; g.fillText(mark, 64, 68);
+      g.font = 'bold 50px system-ui, sans-serif'; g.fillStyle = '#1b1d22'; g.fillText(text, 320, 66);
+      const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+      const m = stdMat({ map: t, emissive: 0xffffff, emissiveMap: t, emissiveIntensity: 0.5 }); this.litMats.push(m);
+      const board = new THREE.Mesh(new THREE.BoxGeometry(4, 1, 0.12), [frameMat, frameMat, frameMat, frameMat, m, frameMat]);
+      board.position.set(x, 3, z - 1.4); board.castShadow = true;
+      const posts = new THREE.Mesh(mergeGeometries([-1.6, 1.6].map(dx => new THREE.BoxGeometry(0.12, 2.6, 0.12).translate(x + dx, 1.3, z - 1.4))), frameMat);
+      scene.add(board, posts);
     }
     this.heights = city.solids.map(s => s.h); // Oberkanten für Treffer und Kamera
     // Innenräume je Stadt-Kachel: nur in der Nähe zeichnen; Kleinkram drinnen nur, wenn eine Ladentür nah ist
