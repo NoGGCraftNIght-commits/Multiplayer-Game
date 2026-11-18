@@ -163,7 +163,7 @@ Autoschaden, Explosion, Fahndung, Verkehr.
 | Was | Quelle | Lizenz |
 |---|---|---|
 | Figuren (42 Erwachsene, 3 Wachen) und Bewegungsaufnahmen | [Microsoft Rocketbox](https://github.com/microsoft/Microsoft-Rocketbox), Stand `0943055`, umgewandelt in GLB | MIT (`client/assets/LICENSE-Rocketbox-MIT.txt`) |
-| Autos (auch Feuerwehr, Müllwagen, Rennwagen, Pritschenwagen, Kleinlaster) | Kenney, [Car Kit](https://kenney.nl/assets/car-kit) | CC0 1.0 |
+| Autos (alle Typen) | eigene Modelle aus Code (`client/js/carmodels.js`) | – |
 | Satellitenschüsseln, Aggregate, Zielscheiben, Essen, Blumen, Frachtschiff | Kenney und Quaternius (über dasselbe npm-Paket) | CC0 1.0 |
 | Bäume, Büsche, Steine, Kisten | Kenney ([Nature Kit](https://kenney.nl/assets/nature-kit)) und [Quaternius](https://quaternius.com) | CC0 1.0 |
 | Geräusche | Kenney: Impact Sounds, Interface Sounds, RPG Audio, Sci-fi Sounds, Digital Audio | CC0 1.0 |

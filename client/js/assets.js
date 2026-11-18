@@ -2,10 +2,10 @@ import * as THREE from 'three';
 import { stdMat, LITE } from './gfx.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
-import { AVATARS, VEHICLE_TYPES } from './shared.js';
+import { AVATARS } from './shared.js';
 
 export const MODELS = [
-  AVATARS[0], 'avatar_clips', ...VEHICLE_TYPES,
+  AVATARS[0], 'avatar_clips',
   'tree_oak', 'tree_pine', 'tree_fat', 'tree_palm', 'bush', 'bush_large', 'rock_small', 'barrel', 'crate',
   'tree_autumn', 'tree_pine_tall', 'flower_red', 'satellite_dish', 'generator', 'cargo_ship', 'target', 'burger', 'fries', 'hot_dog', 'donut', 'cake', 'pizza',
 ];

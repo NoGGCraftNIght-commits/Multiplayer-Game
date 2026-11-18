@@ -52,7 +52,6 @@ export const VEHICLES = {
   delivery_flat:    { name: 'Kleinlaster', mass: 2600, force: 6800, vmax: 32, grip: 2.8, steer: 0.44 },
 };
 export const VEHICLE_TYPES = Object.keys(VEHICLES);
-export const CAR_SIZE = [1.2, 1.12, 1.5]; // Kenney-Modelle auf echte Maße strecken: Breite, Höhe, Länge (Limousine 1,8 x 1,46 x 3,8 m)
 
 // ---------- deterministischer Zufall ----------
 export function rng(seed) {

@@ -1,14 +1,13 @@
 import * as THREE from 'three';
-import { stdMat, LITE } from './gfx.js';
+import { stdMat } from './gfx.js';
 import * as CANNON from 'cannon-es';
-import { assets } from './assets.js';
-import { VEHICLES, VEHICLE_TYPES, CAR_SIZE, HALF, SIZE, BLOCK, BEACH, RIVER, BRIDGES, BRIDGE_HALF, JUMPS, ROAD, roadCenter, rampParts, riverY } from './shared.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { carModel, paintMat, fixedPaint, PAINTS } from './carmodels.js';
+import { VEHICLES, VEHICLE_TYPES, HALF, SIZE, BLOCK, BEACH, RIVER, BRIDGES, BRIDGE_HALF, JUMPS, ROAD, roadCenter, rampParts, riverY } from './shared.js';
 import { SLAB } from './world.js';
 import { Interp } from './net.js';
 
-const SCALE = new THREE.Vector3(...CAR_SIZE);
 const HC = 0.62;          // Höhe des Physik-Schwerpunkts über Modellboden (m)
-const WHEEL_R = 0.3 * SCALE.y;
 const REST = 0.3, SAG = 0.065; // Federweg; SAG = Einfedern im Stand (g / (4 * Federhärte))
 const DOOR_AT = 45;       // ab so viel Seitenschaden fehlt die Tür
 const _p = new THREE.Vector3(), _d = new THREE.Vector3(), _m1 = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _m3 = new THREE.Matrix4(), _ray = new THREE.Raycaster();
@@ -16,26 +15,12 @@ const ramp = (u, from) => { const t = Math.min(1, Math.max(0, (u - from) / (1 - 
 const rnd = (a, b) => a + Math.random() * (b - a);
 const BURNT = stdMat({ color: 0x141312, roughness: 1 }), HOLE = new THREE.MeshBasicMaterial({ color: 0x07080a });
 const GREY = [0.62, 0.62, 0.64], DARK = [0.07, 0.07, 0.07], FIRE = [3.2, 1.1, 0.18], EMBER = [2.4, 0.35, 0.05];
-// Kenney-Atlas (8 x 8 Farbfelder, alle Autos teilen ihn): je Feld Lack, Glas, Zierteile, Reifen oder Chrom
-const CELL_KIND = { '3,4': 'trim', '3,5': 'trim', '2,4': 'tire', '2,5': 'tire', '5,4': 'chrome', '5,5': 'chrome', '0,6': 'glass', '0,7': 'glass' }; // 'Spalte,Zeile'
-const KIND = { paint: [0.32, 0.15, 1, '#c4c4c4'], glass: [0.06, 0, 0.5, '#262d38'], trim: [0.45, 0.2, 0.4, '#7a7f88'], tire: [0.92, 0, 0, '#5a5a5a'], chrome: [0.12, 1, 0, '#ffffff'], light: [0.2, 0, 1, '#ffffff'] }; // Rauheit, Metall, Klarlack, Farbe (multipliziert)
-let CAR = null;
-function carMaterial(map) {
-  if (CAR) return CAR;
-  const img = map.image, n = img.width, s = n / 8, mk = () => Object.assign(document.createElement('canvas'), { width: n, height: n });
-  const col = mk(), rm = mk(), cc = mk(), g = col.getContext('2d'), gr = rm.getContext('2d'), gc = cc.getContext('2d');
-  g.drawImage(img, 0, 0); g.globalCompositeOperation = 'multiply';
-  for (let x = 0; x < 8; x++) for (let y = 0; y < 8; y++) {
-    const k = CELL_KIND[x + ',' + y] || (y >= 6 && x <= 2 ? 'light' : 'paint');
-    const [r, m, c, tint] = KIND[k];
-    gr.fillStyle = `rgb(0,${r * 255 | 0},${m * 255 | 0})`; gr.fillRect(x * s, y * s, s, s); // glTF-Art: Rauheit in Grün, Metall in Blau
-    gc.fillStyle = `rgb(${c * 255 | 0},0,0)`; gc.fillRect(x * s, y * s, s, s);
-    g.fillStyle = tint; g.fillRect(x * s, y * s, s, s); // Lack etwas tiefer, Glas dunkel getönt
-  }
-  const tex = (c, srgb) => Object.assign(new THREE.CanvasTexture(c), { flipY: map.flipY, colorSpace: srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace, anisotropy: 4 });
-  if (LITE) return CAR = new THREE.MeshLambertMaterial({ map: tex(col, true) }); // Chromebook: kein Klarlack
-  const rmT = tex(rm);
-  return CAR = new THREE.MeshPhysicalMaterial({ map: tex(col, true), roughnessMap: rmT, metalnessMap: rmT, clearcoatMap: tex(cc), clearcoat: 1, clearcoatRoughness: 0.06, roughness: 1, metalness: 1 });
+const lamps = new Map();
+function lampGeo(type, ud) {
+  if (lamps.has(type)) return lamps.get(type);
+  const x = ud.W / 2 - 0.32, pair = (w, h, y, z) => mergeGeometries([-1, 1].map(sx => new THREE.BoxGeometry(w, h, 0.05).translate(sx * x, y, z)));
+  const g = [pair(0.34, 0.12, ud.lamp[0], ud.front + 0.01), pair(0.36, 0.1, ud.lamp[1], ud.back - 0.01)];
+  lamps.set(type, g); return g;
 }
 const pixel = Object.assign(document.createElement('canvas'), { width: 1, height: 1 }).getContext('2d', { willReadFrequently: true });
 const SOFT = (() => { // weicher runder Tupfer für Rauch und Flammen
@@ -115,29 +100,28 @@ export class Vehicles {
   add(s) {
     const type = VEHICLE_TYPES[s[10]] || 'sedan';
     const cfg = VEHICLES[type];
-    const model = assets.models[type].scene.clone(true);
-    model.scale.copy(SCALE);
-    model.traverse(o => { if (o.isMesh && o.material.map) o.material = carMaterial(o.material.map); });
+    const proto = carModel(type), model = proto.clone(true), ud = proto.userData;
+    const paint = paintMat(fixedPaint(type) ?? PAINTS[(s[0] * 7 + 3) % PAINTS.length]); // Lackfarbe fest je Auto-Nummer: alle sehen dieselbe
+    model.traverse(o => { if (o.name === 'paint') o.material = paint; });
     const group = new THREE.Group(); group.add(model); this.scene.add(group);
-    // Räder aus der gestreckten Karosserie lösen (sonst würden sie oval); das Reserverad am Heck zählt nicht
+    // Räder direkt an die Gruppe hängen (drehen und lenken unabhängig von der verformbaren Karosserie)
     const wheels = [];
     model.traverse(o => { if (/^wheel-(front|back)-(left|right)$/.test(o.name)) wheels.push({ node: o, front: o.name.includes('front'), base: o.quaternion.clone() }); });
-    for (const w of wheels) { w.node.position.multiply(SCALE); w.node.scale.multiplyScalar(SCALE.y); group.add(w.node); }
+    for (const w of wheels) group.add(w.node);
     const shell = []; model.traverse(o => { if (o.isMesh) shell.push(o); }); // Karosserie-Teile (verformbar)
     const bb = new THREE.Box3().setFromObject(group);
     const half = new CANNON.Vec3((bb.max.x - bb.min.x) / 2 * 0.95, 0.36, (bb.max.z - bb.min.z) / 2 * 0.97);
     const body = new CANNON.Body({ type: CANNON.Body.KINEMATIC, mass: 0 });
     body.addShape(new CANNON.Box(half), new CANNON.Vec3(0, 0.12, (bb.max.z + bb.min.z) / 2));
     this.world.addBody(body);
-    // Licht: Scheinwerfer (emissiv, leuchten nachts mit Bloom)
+    // Licht: eckige Scheinwerfer und Rückleuchten (emissiv, leuchten nachts mit Bloom), je Paar ein Draw Call
     const lightMat = stdMat({ color: 0xfff6d8, emissive: 0xfff2c0, emissiveIntensity: 0.3 });
     const tailMat = stdMat({ color: 0xff3030, emissive: 0xff2020, emissiveIntensity: 0.4 });
-    const hl = new THREE.BoxGeometry(0.3, 0.11, 0.05);
-    for (const sx of [-1, 1]) {
-      const h = new THREE.Mesh(hl, lightMat); h.position.set(sx * half.x * 0.62, 0.6, bb.max.z + 0.01); group.add(h);
-      const t = new THREE.Mesh(hl, tailMat); t.position.set(sx * half.x * 0.66, 0.68, bb.min.z - 0.01); group.add(t);
-    }
-    const v = { id: s[0], type, cfg, group, model, wheels, shell, body, half, bb, lightMat, tailMat, buf: new Interp(), hp: 100, dz: [0, 0, 0, 0], st: 0, doors: [null, null], hop: -1, driver: s[9], traffic: !!s[11], spin: 0, steer: 0, speed: 0,
+    const [hg, tg] = lampGeo(type, ud);
+    group.add(new THREE.Mesh(hg, lightMat), new THREE.Mesh(tg, tailMat));
+    // Blaulicht: eigene Materialien je Auto, blinken nur bei Einsatz
+    const bars = ['bar-r', 'bar-b'].map((n, i) => { const m = model.getObjectByName(n); if (m) m.material = stdMat({ color: i ? 0x2050ff : 0xff2020, emissive: i ? 0x2050ff : 0xff2020, emissiveIntensity: 0.2 }); return m?.material; }).filter(Boolean);
+    const v = { id: s[0], type, cfg, group, model, wheels, shell, body, half, bb, lightMat, tailMat, bars, siren: false, wr: ud.wheelR, buf: new Interp(), hp: 100, dz: [0, 0, 0, 0], st: 0, doors: [null, null], hop: -1, driver: s[9], traffic: !!s[11], spin: 0, steer: 0, speed: 0,
       pos: new THREE.Vector3(s[1], s[2], s[3]), quat: new THREE.Quaternion(s[4], s[5], s[6], s[7]) };
     this.list[v.id] = v;
     this.place(v, v.pos, v.quat);
@@ -169,7 +153,7 @@ export class Vehicles {
     for (const w of v.wheels) {
       const p = w.node.position; // Radmitte in Metern (Fahrzeugkoordinaten)
       rv.addWheel({
-        radius: WHEEL_R, directionLocal: new CANNON.Vec3(0, -1, 0), axleLocal: new CANNON.Vec3(-1, 0, 0),
+        radius: v.wr, directionLocal: new CANNON.Vec3(0, -1, 0), axleLocal: new CANNON.Vec3(-1, 0, 0),
         chassisConnectionPointLocal: new CANNON.Vec3(p.x, p.y - HC + REST - SAG, p.z),
         suspensionStiffness: 38, suspensionRestLength: REST, frictionSlip: cfg.grip, dampingRelaxation: 2.6, dampingCompression: 4.2,
         maxSuspensionForce: 1e6, rollInfluence: 0.04, maxSuspensionTravel: 0.25, customSlidingRotationalSpeed: -30, useCustomSlidingRotationalSpeed: true,
@@ -267,7 +251,8 @@ export class Vehicles {
         v.group.position.copy(v.pos); v.group.quaternion.copy(v.quat);
       } else if (!v.buf.len()) { v.body.velocity.setZero(); }
       // Räder drehen + lenken
-      v.spin += v.speed * dt / WHEEL_R;
+      v.spin += v.speed * dt / v.wr;
+      if (v.bars.length) { const on = v.siren && v.st !== 2, ph = Math.floor(performance.now() / 160) % 2; v.bars[0].emissiveIntensity = on && ph ? 6 : 0.2; v.bars[1].emissiveIntensity = on && !ph ? 6 : 0.2; }
       for (const w of v.wheels) {
         w.node.quaternion.copy(w.base);
         if (w.front) w.node.rotateY(v.steer);
@@ -349,7 +334,7 @@ export class Vehicles {
     _ray.set(v.group.localToWorld(_p.set(sx * 3, 0.62, z)), _d.set(-sx, 0, 0).transformDirection(v.group.matrixWorld));
     const hit = _ray.intersectObjects(v.shell, false)[0]; // Blech der Seite: dort sitzt die Öffnung, dort wird die Lackfarbe abgelesen
     const x = hit ? v.group.worldToLocal(hit.point).x : sx * v.half.x, img = hit?.object.material.map?.image;
-    let color = 0x777b84;
+    let color = hit && !hit.object.material.vertexColors ? hit.object.material.color.getHex() : 0x777b84;
     if (img && hit.uv) {
       const uv = hit.object.material.map.transformUv(hit.uv);
       pixel.drawImage(img, Math.floor(uv.x * img.width), Math.floor(uv.y * img.height), 1, 1, 0, 0, 1, 1);
