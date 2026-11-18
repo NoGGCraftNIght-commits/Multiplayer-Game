@@ -2,7 +2,7 @@
 // Aufbau per direktem Zugriff auf den Serverzustand (place), geprüft wird über das Netzprotokoll.
 import assert from 'node:assert/strict';
 import { io as connect } from 'socket.io-client';
-import { MAX_PLAYERS, WEAPONS, AVATARS, buildCity, node, RIVER, JUMPS, ROAD, roadCenter, riverY, pushOut, START_MONEY } from '../client/js/shared.js';
+import { MAX_PLAYERS, WEAPONS, AVATARS, buildCity, node, RIVER, JUMPS, ROAD, roadCenter, riverY, pushOut, START_MONEY, SPRAYS, SPRAY_COST } from '../client/js/shared.js';
 
 process.env.PORT ||= '3987';
 const { httpServer, io, rooms } = await import('./server.js');
@@ -141,7 +141,7 @@ assert.deepEqual([(await koA).id, (await koA).by, (await koA).w, (await freed).d
 place(pb, v.x + 2, v.z);
 assert.equal(await enter(b), false, 'Wrack ist nicht fahrbar');
 const fresh = once(b, 'vdmg', q => q[6] === 0); v.resetAt = 0;
-assert.deepEqual((await fresh).slice(1), [100, 0, 0, 0, 0, 0], 'Wrack wird ersetzt');
+assert.deepEqual((await fresh).slice(1), [100, 0, 0, 0, 0, 0, -1], 'Wrack wird ersetzt');
 assert.deepEqual([v.x, v.z], v.home.slice(0, 2), 'und steht wieder am Parkplatz');
 step('Autoschaden + Explosion');
 
@@ -156,8 +156,8 @@ const pedsMsg = await once(a, 'peds', m => m.c?.some((q, i) => i % 6 === 4 && q 
 assert.equal(pedsMsg.c.length, 48, 'Wachen stehen in der Passanten-Nachricht');
 const cop = room.cops.find(Boolean);
 assert(Math.hypot(cop.x - pa.x, cop.z - pa.z) > 40, 'Wache erscheint außer Sicht');
-place(pa, X, Z); Object.assign(cop, { x: X + 8, z: Z, node: null }); pa.hp = 100;
-assert.equal((await once(a, 'hp', q => q.id === ra.id)).w, -3, 'Wache trifft mit Wasser');
+place(pa, X, Z); Object.assign(cop, { x: X + 8, z: Z, node: null }); pa.hp = 100; pa.wanted = 3.1; // ab 3 Sternen wird geschossen
+assert.equal((await once(a, 'hp', q => q.id === ra.id)).w, -3, 'Wache schießt ab 3 Sternen');
 cop.hp = 1; const before = pa.wanted;
 a.emit('shoot', { w: 0, o: [X, 1.4, Z], d: [1, 0, 0], seed: 1 }); a.emit('hit', { t: 'c', id: cop.id, w: 0 }); await sleep(150);
 assert.deepEqual([cop.state, pa.wanted > before + 1], ['down', true], 'Wache umgespritzt gibt Sterne');
@@ -170,6 +170,27 @@ room.cops.fill(null); room.heli = null; pa.seenT = 0; pa.hp = 100;
 await once(a, 'wanted', m => m.stars === 0);
 assert.equal(pa.wanted, 0, 'Sterne verjähren ohne Wache in der Nähe');
 step('Fahndung, Stadtwache, Hubschrauber');
+
+// --- Streifenwagen rückt mit Sirene aus, Wache verhaftet bei Kontakt, Lackiererei macht sauber
+place(pa, X, Z); Object.assign(pa, { wanted: 1.5, seenT: Date.now(), carT: 0, hp: 100 });
+const cruiser = await (async () => { for (let k = 0; k < 20; k++) { await sleep(100); const q = room.vehicles.find(q => q.chase?.target === pa.id); if (q) return q; } })();
+assert(cruiser?.siren, 'Streifenwagen rückt aus');
+await once(a, 'snap', m => m.v.some(q => q[0] === cruiser.id && q[11] === 2)); // Sirene steht im Fahrzeugzustand
+room.cops.fill(null); room.cops[0] = { id: 0, x: X + 1, y: 0, z: Z, yaw: 0, anim: 0, kind: 0, hp: 60, state: 'chase', target: pa.id, cool: 1, idle: 0, timer: 0, node: null };
+pa.own[1] = true; pa.money = 250; pa.seenT = Date.now();
+await once(a, 'ko', m => m.id === ra.id && m.w === -4);
+assert.deepEqual([pa.own[1], pa.money, pa.wanted], [false, 150, 0], 'Festnahme: Waffen weg, Strafe, Sterne weg');
+await once(a, 'respawn'); await sleep(200);
+assert(!cruiser.chase && !cruiser.siren && cruiser.traffic, 'Streife fährt danach weiter im Verkehr');
+const sp = SPRAYS[0], car2 = room.vehicles.find(q => !q.isTraffic && !q.driver && !q.st && q !== v);
+Object.assign(car2, { x: sp.x - 6, z: sp.z, hp: 60 }); place(pa, sp.x - 6, sp.z + 2);
+assert.equal(await new Promise(res => a.emit('enter', car2.id, res)), true);
+Object.assign(pa, { wanted: 2.2, money: 500, seenT: Date.now() }); const paint0 = car2.paint, sprayed = once(a, 'spray');
+a.emit('vs', [car2.id, sp.x, 0, sp.z, 0, 0, 0, 1, 0, 9000]);
+assert.equal((await sprayed).ok, true);
+assert.deepEqual([pa.wanted, pa.money, car2.hp, car2.paint !== paint0], [0, 500 - SPRAY_COST, 100, true], 'Lackiererei: Sterne weg, Auto heil, neue Farbe');
+a.emit('exit'); await sleep(100);
+step('Streifenwagen, Festnahme, Lackiererei');
 
 // --- Verkehr fließt (bleibt nicht hinter geparkten Autos hängen)
 const traffic = room.vehicles.filter(q => q.traffic), from = traffic.map(q => [q.x, q.z]);

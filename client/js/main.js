@@ -11,7 +11,7 @@ import { Input } from './input.js';
 import { Hud } from './hud.js';
 import { makeHeli } from './heli.js';
 import { Net, Interp, RENDER_DELAY } from './net.js';
-import { MAX_PLAYERS, A, AIM_FLAG, AVATARS, COPS, WEAPONS, DAY_LENGTH, TICK_HZ, PED_HZ, HALF, BEACH, RIVER, buildCity, pushOut, clamp, sanitizeName, sanitizeRoom } from './shared.js';
+import { MAX_PLAYERS, A, AIM_FLAG, AVATARS, COPS, WEAPONS, DAY_LENGTH, TICK_HZ, PED_HZ, HALF, BEACH, RIVER, SPRAYS, SPRAY_COST, buildCity, pushOut, clamp, sanitizeName, sanitizeRoom } from './shared.js';
 
 // Grand Tor Auto – Spielschleife: Menü, Beitritt, eigene Figur, Kamera, Fahren, Netz, HUD.
 const $ = (id) => document.getElementById(id);
@@ -235,7 +235,7 @@ function bindNet() {
     if (stars > me.stars) { hud.feed(me.stars ? 'Die Fahndung wird verschärft!' : 'Die Polizei sucht dich!'); audio.play('ui', { vol: 0.9, rate: 0.6 }); }
     else if (!stars && me.stars) hud.feed('Fahndung eingestellt');
     me.stars = stars;
-    txt($('starsOn'), '★'.repeat(stars)); txt($('starsOff'), '★'.repeat(5 - stars));
+    txt($('starsOn'), '★'.repeat(stars)); txt($('starsOff'), '★'.repeat(6 - stars));
     $('stars').className = stars ? (hide ? 'hide' : '') : 'off'; // blinkt, solange dich keine Wache sieht
   });
   net.on('pjoin', (p) => { addPlayer(p); hud.feed(`${p.name} ist da`); });
@@ -262,6 +262,11 @@ function bindNet() {
     if (got >= 0) { pickWeapon(got); audio.play('coin', { vol: 0.6 }); hud.feed(`${WEAPONS[got].name} erhalten`); }
   });
   net.on('pickup', ({ i, left }) => { if (pickups[i]) pickups[i].until = performance.now() + left; });
+  net.on('spray', ({ ok, vid }) => {
+    if (!ok) return hud.feed(`Lackiererei: ${SPRAY_COST} $ nötig`);
+    hud.feed(`Neu lackiert, Fahndung weg! −${cash(SPRAY_COST)}`); audio.play('confirm', { vol: 0.8 });
+    const v = vehicles.list[vid]; if (v) vehicles.mist(v);
+  });
   net.on('stunt', (m) => { hud.feed(`Sprung geschafft! +${cash(m)}`); audio.play('kill', { vol: 0.5 }); });
   net.on('fix', ([x, z]) => { if (!me.veh) { me.pos.x = x; me.pos.z = z; } });
   net.on('vfix', (s) => vehicles.fix(s));
@@ -274,11 +279,11 @@ function bindNet() {
     const a = who(by), b = who(id);
     if (a) a.score = score; if (b) { b.kos = kos; b.hp = 0; }
     const bn = b?.name ?? 'Jemand';
-    hud.feed(w === -2 ? `${bn} ist mit einem Auto in die Luft geflogen` : w === -3 ? `${bn} wurde von der Polizei verhaftet` : `${a?.name ?? 'Jemand'} hat ${bn} ${WEAPONS[w] ? `ausgeschaltet (${WEAPONS[w].name})` : 'umgefahren'}`);
+    hud.feed(w === -2 ? `${bn} ist mit einem Auto in die Luft geflogen` : w === -4 ? `${bn} wurde verhaftet` : w === -3 ? `${bn} wurde von der Polizei erschossen` : `${a?.name ?? 'Jemand'} hat ${bn} ${WEAPONS[w] ? `ausgeschaltet (${WEAPONS[w].name})` : 'umgefahren'}`);
     if (b === me) {
       me.alive = false; koUntil = performance.now() + 4000; ui.ko.classList.remove('hidden'); document.body.classList.add('ko'); audio.play('kill');
-      koBy = w === -2 ? 'durch eine Explosion' : w === -3 ? 'von der Polizei' : `von ${a?.name ?? 'jemandem'}`;
-      txt(ui.ko.firstChild, w === -3 ? 'Verhaftet!' : 'Erledigt!');
+      koBy = w === -4 ? 'Waffen weg, 100 $ Strafe' : w === -2 ? 'durch eine Explosion' : w === -3 ? 'von der Polizei' : `von ${a?.name ?? 'jemandem'}`;
+      txt(ui.ko.firstChild, w === -4 ? 'Verhaftet!' : 'Erledigt!');
     }
     else if (a === me) audio.play('coin', { vol: 0.8 });
   });
@@ -659,7 +664,7 @@ function drawHud(dt, now) {
   hud.update(world.camera);
   if ((slowT += dt) < 0.1) return; // Rest: 10x pro Sekunde reicht
   slowT = 0;
-  const marks = [...city.buildings.filter(b => b.buy).map(b => ({ x: b.buy[0], z: b.buy[1], c: '#ff8a1f', r: 5 })), ...pickups.filter(q => now >= q.until && !own[q.w]).map(q => ({ x: q.x, z: q.z, c: '#ffd23f', r: 2.6 }))];
+  const marks = [...city.buildings.filter(b => b.buy).map(b => ({ x: b.buy[0], z: b.buy[1], c: '#ff8a1f', r: 5 })), ...pickups.filter(q => now >= q.until && !own[q.w]).map(q => ({ x: q.x, z: q.z, c: '#ffd23f', r: 2.6 })), ...SPRAYS.map(q => ({ x: q.x, z: q.z, c: '#ff5aa0', r: 5 }))];
   hud.minimap(me.pos, v ? carYaw(v) : me.yaw, cam.yaw, [...players.values(), ...cops.filter(c => c.on)], vehicles.list, marks);
   const m = Math.floor(tod * 1440);
   txt(ui.clock, `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`);
@@ -702,6 +707,8 @@ function play(dt, now) {
   world.updateTime(tod, me.pos);
   drawHud(dt, now);
   Object.assign(audio.listener, { x: world.camera.position.x, z: world.camera.position.z, yaw: cam.yaw });
+  let sd = -1; for (const v of vehicles.list) if (v?.siren && v.st !== 2) { const d = v.pos.distanceTo(world.camera.position); if (sd < 0 || d < sd) sd = d; }
+  audio.siren(sd < 150 ? sd : -1); // nächste Sirene
 }
 
 // Shader-Karten: Wechsel zwischen Chromebook- und PBR-Shadern lädt neu (Materialien entstehen beim Start)

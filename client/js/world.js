@@ -10,7 +10,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { assets } from './assets.js';
 import { makeBuildings } from './buildings.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { GRID, BLOCK, ROAD, WALK, CELL, SIZE, HALF, BEACH, RIVER, BRIDGES, BRIDGE_HALF, JUMPS, RIVER_ROW, blockMin, roadCenter, riverY, rampParts, localPoint } from './shared.js';
+import { GRID, BLOCK, ROAD, WALK, CELL, SIZE, HALF, BEACH, RIVER, BRIDGES, BRIDGE_HALF, JUMPS, RIVER_ROW, blockMin, roadCenter, riverY, rampParts, localPoint, SPRAYS } from './shared.js';
 
 export const SLAB = 0.14; // Gehweghöhe (Bordstein)
 
@@ -281,6 +281,20 @@ export class World {
     const B = makeBuildings(city, SLAB, this.settings.quality !== 'low');
     scene.add(...B.meshes);
     this.litMats = B.lit;
+    // Lackierereien: Portal über der Fahrbahn mit Leuchtschild und Sprührohr (Pfeiler stehen auf den Gehwegen)
+    const sc = Object.assign(document.createElement('canvas'), { width: 512, height: 96 }), sg = sc.getContext('2d');
+    sg.fillStyle = '#17141f'; sg.fillRect(0, 0, 512, 96); sg.font = 'bold 56px system-ui, sans-serif'; sg.textAlign = 'center'; sg.textBaseline = 'middle';
+    sg.shadowColor = '#ff5aa0'; sg.shadowBlur = 18; sg.fillStyle = '#ff8cc4'; sg.fillText('LACK & SPRAY', 256, 50);
+    const stex = new THREE.CanvasTexture(sc); stex.colorSpace = THREE.SRGBColorSpace;
+    const signMat = stdMat({ map: stex, emissive: 0xffffff, emissiveMap: stex, emissiveIntensity: 0.5 }); this.litMats.push(signMat);
+    const off = ROAD / 2 + 1.2, frame = mergeGeometries([new THREE.BoxGeometry(0.5, 5.6, 0.5).translate(0, 2.8, off), new THREE.BoxGeometry(0.5, 5.6, 0.5).translate(0, 2.8, -off),
+      new THREE.BoxGeometry(0.7, 0.6, 2 * off + 0.5).translate(0, 5.5, 0), new THREE.CylinderGeometry(0.09, 0.09, 2 * off, 8).rotateX(Math.PI / 2).translate(0, 5.05, 0)]);
+    const signGeo = mergeGeometries([new THREE.BoxGeometry(0.12, 1.3, 8).translate(0.42, 6.4, 0), new THREE.BoxGeometry(0.12, 1.3, 8).rotateY(Math.PI).translate(-0.42, 6.4, 0)]);
+    const frameMat = stdMat({ color: 0x3a3f4a, roughness: 0.5, metalness: 0.5 });
+    for (const q of SPRAYS) {
+      const g = new THREE.Group(); g.position.set(q.x, 0, q.z); if (q.along === 'z') g.rotation.y = Math.PI / 2;
+      const f = new THREE.Mesh(frame, frameMat), sign = new THREE.Mesh(signGeo, signMat); f.castShadow = true; g.add(f, sign); scene.add(g);
+    }
     this.heights = city.solids.map(s => s.h); // Oberkanten für Treffer und Kamera
     // Innenräume je Stadt-Kachel: nur in der Nähe zeichnen; Kleinkram drinnen nur, wenn eine Ladentür nah ist
     this.rooms = B.rooms.map(R => { const g = new THREE.Group(); g.add(...R.meshes); g.visible = false; scene.add(g); return { x: R.x, z: R.z, g }; });

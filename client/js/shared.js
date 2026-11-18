@@ -98,6 +98,12 @@ export function riverY(x, z) { // Kanalprofil ohne Brücken, 0 = Straßenniveau
   if (x < -HALF || x > HALF || z <= RIVER.z0 || z >= RIVER.z1) return 0;
   return Math.max(RIVER.bed, Math.min(z - RIVER.z0, RIVER.z1 - z) * RIVER.bed / RIVER.slope);
 }
+// Lackierereien: Durchfahrt-Portal über einem Straßenstück [i, j, Richtung]. Durchfahren mit Fahndung oder Schaden:
+// Sterne weg, Auto heil, neue Farbe, kostet SPRAY_COST
+export const SPRAY_COST = 100;
+export const SPRAYS = [[1, 2, 'x'], [5, 1, 'z'], [2, 6, 'x']].map(([i, j, d]) => d === 'x'
+  ? { x: (roadCenter(i) + roadCenter(i + 1)) / 2, z: roadCenter(j), along: 'x' } : { x: roadCenter(i), z: (roadCenter(j) + roadCenter(j + 1)) / 2, along: 'z' });
+export const inSpray = (q, x, z) => Math.abs(q.along === 'x' ? x - q.x : z - q.z) < 3.5 && Math.abs(q.along === 'x' ? z - q.z : x - q.x) < ROAD / 2;
 export const roadOpen = (i, j, a, b) => !(i === a && JUMPS.includes(i) && Math.min(j, b) === RIVER_ROW); // Straßenstück (i,j)-(a,b) befahrbar?
 
 export function buildCity(seed = 1337) {

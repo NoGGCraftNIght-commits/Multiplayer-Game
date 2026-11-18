@@ -107,6 +107,18 @@ export class Audio {
     this.rot.gain.setTargetAtTime(dist < 0 ? 0 : 0.5 / (1 + dist * dist * 0.0004), this.ctx.currentTime, 0.2);
   }
 
+  // Polizeisirene: auf- und abschwellender Heulton der nächsten Sirene (dist < 0 = aus)
+  siren(dist) {
+    if (!this.ctx || (dist < 0 && !this.sir)) return;
+    if (!this.sir) {
+      const o = this.ctx.createOscillator(), lfo = this.ctx.createOscillator(), depth = this.ctx.createGain(), f = this.ctx.createBiquadFilter(), g = this.ctx.createGain();
+      o.type = 'sawtooth'; o.frequency.value = 950; lfo.frequency.value = 0.55; depth.gain.value = 380; f.type = 'lowpass'; f.frequency.value = 2400; g.gain.value = 0;
+      lfo.connect(depth).connect(o.frequency); o.connect(f).connect(g).connect(this.master); o.start(); lfo.start();
+      this.sir = g;
+    }
+    this.sir.gain.setTargetAtTime(dist < 0 ? 0 : 0.11 / (1 + dist * dist * 0.0015), this.ctx.currentTime, 0.15);
+  }
+
   horn(pos) {
     if (!this.ctx) return;
     let g = 0.25;

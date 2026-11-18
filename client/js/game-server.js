@@ -2,7 +2,7 @@
 // und ohne Server im Browser des Raum-Gastgebers (p2p.js); beide reichen ein Socket.io-artiges `io` herein.
 import {
   MAX_PLAYERS, TICK_HZ, PED_HZ, A, AIM_FLAG, AVATARS, COPS, WEAPONS, VEHICLES, VEHICLE_TYPES, CAR_HIT_DAMAGE, GRID, CELL, HALF, BEACH, LANE, ROAD,
-  buildCity, sidewalkLoop, node, roadOpen, rng, START_MONEY, KO_MONEY, JUMP_MONEY, PICKUP_RESPAWN, RIVER, JUMPS, roadCenter, localPoint, clamp, pushOut, sanitizeName, sanitizeRoom,
+  buildCity, sidewalkLoop, node, roadOpen, rng, SPRAYS, SPRAY_COST, inSpray, START_MONEY, KO_MONEY, JUMP_MONEY, PICKUP_RESPAWN, RIVER, JUMPS, roadCenter, localPoint, clamp, pushOut, sanitizeName, sanitizeRoom,
 } from './shared.js';
 
 // `io` kommt per startGame(); bis dahin merkt sich der Platzhalter nur den Verbindungs-Handler
@@ -19,7 +19,10 @@ const CRASH = 1.3;           // Schadenspunkte am Auto je m/s plötzlichem Tempo
 const FUSE_MS = 4500;        // brennendes Auto explodiert nach dieser Zeit
 const WRECK_MS = 25000;      // so lange bleibt ein Wrack liegen
 const COP_SLOTS = 8;         // höchstens so viele Wachen pro Raum
-const WANT = [0, 2, 3, 4, 5, 6]; // Wachen, die ein Spieler mit n Sternen auf sich zieht; ab 3 Sternen kommt der Hubschrauber
+const WANT = [0, 2, 3, 4, 5, 6, 7]; // Wachen zu Fuß, die ein Spieler mit n Sternen auf sich zieht; ab 3 Sternen kommt der Hubschrauber
+const CAR_COPS = [0, 1, 1, 2, 2, 3, 3]; // Streifenwagen je Sternzahl
+const CRUISERS = 3;          // zusätzliche Streifenwagen im Verkehr (fahren Streife, bis jemand gesucht wird)
+const BUST_FINE = 100;       // Festnahme: Waffen weg und diese Strafe
 
 const city = buildCity(SEED);
 const rooms = new Map();
@@ -111,6 +114,8 @@ function createRoom(code) {
     startTraffic(room, v);
     room.vehicles.push(v);
   }
+  for (let k = 0; k < CRUISERS; k++) { const v = makeVehicle(room.vehicles.length, 'police_car', 0, 0, 0); v.isTraffic = true; startTraffic(room, v); room.vehicles.push(v); }
+  for (const v of room.vehicles) if (v.isTraffic && v.type === 'police_car') v.cruiser = true;
   // Passanten
   for (let k = 0; k < PEDS_PER_ROOM; k++) {
     const block = walkable[Math.floor(rand() * walkable.length)];
@@ -131,7 +136,7 @@ const CROSS = [[[-1, 0, 1], [0, -1, 3]], [[1, 0, 0], [0, -1, 2]], [[1, 0, 3], [0
 
 // hp/dz/st = Zustand: Energie, Schaden je Zone [vorn, hinten, links, rechts], 0 heil · 1 brennt · 2 Wrack
 function makeVehicle(id, type, x, z, yaw) {
-  return { id, type, x, y: 0, z, qx: 0, qy: Math.sin(yaw / 2), qz: 0, qw: Math.cos(yaw / 2), steer: 0, driver: 0, traffic: null, moved: Date.now(),
+  return { id, type, paint: -1, chase: null, siren: false, x, y: 0, z, qx: 0, qy: Math.sin(yaw / 2), qz: 0, qw: Math.cos(yaw / 2), steer: 0, driver: 0, traffic: null, moved: Date.now(),
     hp: 100, dz: [0, 0, 0, 0], st: 0, home: [x, z, yaw], vx: 0, vz: 0, vok: false, budget: 25 };
 }
 
@@ -257,8 +262,8 @@ function scarePeds(room, x, z, radius) {
 }
 
 const publicPlayer = (p) => ({ id: p.id, name: p.name, avatar: p.avatar, color: p.color, hp: p.hp, score: p.score, kos: p.kos });
-const dmgState = (v) => [v.id, Math.round(v.hp), ...v.dz.map(Math.round), v.st];
-const vehState = (v) => [v.id, r2(v.x), r2(v.y), r2(v.z), r2(v.qx), r2(v.qy), r2(v.qz), r2(v.qw), r2(v.steer), v.driver, VEHICLE_TYPES.indexOf(v.type), v.traffic ? 1 : 0];
+const dmgState = (v) => [v.id, Math.round(v.hp), ...v.dz.map(Math.round), v.st, v.paint];
+const vehState = (v) => [v.id, r2(v.x), r2(v.y), r2(v.z), r2(v.qx), r2(v.qy), r2(v.qz), r2(v.qw), r2(v.steer), v.driver, VEHICLE_TYPES.indexOf(v.type), v.siren ? 2 : v.traffic ? 1 : 0];
 
 // ---------- Verbindungen ----------
 io.on('connection', (socket) => {
@@ -286,7 +291,7 @@ io.on('connection', (socket) => {
     socket.to(code).emit('pjoin', publicPlayer(me));
     ack({ id: me.id, room: code, seed: SEED, serverTime: Date.now(), start: room.start,
       players: [...room.players.values()].map(publicPlayer), vehicles: room.vehicles.map(vehState),
-      damage: room.vehicles.filter(v => v.hp < 100 || v.st).map(dmgState), own: me.own, money: me.money, pickups: pickupState(room), spawn: [me.x, me.z], hostId: [...room.players.values()].find(p => p.sid === 'local')?.id });
+      damage: room.vehicles.filter(v => v.hp < 100 || v.st || v.paint >= 0).map(dmgState), own: me.own, money: me.money, pickups: pickupState(room), spawn: [me.x, me.z], hostId: [...room.players.values()].find(p => p.sid === 'local')?.id });
   });
 
   // eigener Spielerzustand: [x,y,z,yaw,anim,weap,pitch]
@@ -342,6 +347,8 @@ io.on('connection', (socket) => {
     v.x = x; v.z = z; v.y = clamp(v.y, -4, 100);
     v.moved = now;
     me.x = v.x; me.z = v.z; me.y = v.y;
+    const q = SPRAYS.find(q => inSpray(q, x, z));
+    if (q && now - (me.sprayT || 0) > 8000 && (me.wanted || v.hp < 100 || v.st === 1)) spray(room, me, v, now);
   });
 
   socket.on('enter', (vid, ack) => {
@@ -350,6 +357,7 @@ io.on('connection', (socket) => {
     if (!v || !me.alive || me.veh || v.driver || v.st === 2) return ack(false);
     if (Math.hypot(v.x - me.x, v.z - me.z) > 6) return ack(false);
     if (v.traffic) { v.traffic = null; scarePeds(room, v.x, v.z, 10); crime(me, 1); } // Verkehrsauto übernommen: Fahrer flieht (unsichtbar) – Passanten erschrecken
+    if (v.chase) { v.chase = null; v.siren = false; crime(me, 2); } // Streifenwagen im Einsatz geklaut
     v.driver = me.id; me.veh = v.id + 1; v.moved = v.rt = Date.now();
     Object.assign(v, { budget: 25, vok: false, off: NaN, syncT: 0, vx: 0, vz: 0 });
     io.to(room.code).emit('vown', { vid: v.id, driver: me.id });
@@ -434,7 +442,13 @@ io.on('connection', (socket) => {
     io.to(room.code).emit('say', { ped: p.id, line: Math.floor(Math.random() * 1000), to: me.id });
   });
 
-  socket.on('horn', () => { if (me && me.veh) { socket.to(room.code).volatile.emit('horn', { vid: me.veh - 1 }); const v = room.vehicles[me.veh - 1]; scarePeds(room, v.x, v.z, 9); } });
+  socket.on('horn', () => {
+    if (!me || !me.veh) return;
+    const v = room.vehicles[me.veh - 1];
+    if (v.type === 'police_car') v.siren = !v.siren; // im Streifenwagen schaltet die Hupe die Sirene
+    else socket.to(room.code).volatile.emit('horn', { vid: me.veh - 1 });
+    scarePeds(room, v.x, v.z, 9);
+  });
   socket.on('emote', (e) => { if (me) socket.to(room.code).emit('emote', { id: me.id, e: clamp(e | 0, 0, 3) }); });
 
   socket.on('disconnect', () => {
@@ -450,8 +464,18 @@ function releaseVehicle(room, p) {
   const v = room.vehicles[p.veh - 1];
   p.veh = 0;
   if (!v) return;
-  v.driver = 0; v.steer = 0; v.moved = Date.now();
+  v.driver = 0; v.steer = 0; v.moved = Date.now(); v.siren = false;
   io.to(room.code).emit('vown', { vid: v.id, driver: 0 });
+}
+
+// Lackiererei: Fahndung weg, Auto heil, neue Farbe – wenn das Geld reicht
+function spray(room, p, v, now) {
+  p.sprayT = now;
+  if (p.money < SPRAY_COST) return io.to(p.sid).emit('spray', { ok: false });
+  p.money -= SPRAY_COST; p.wanted = 0; sendOwn(p);
+  Object.assign(v, { hp: 100, dz: [0, 0, 0, 0], st: 0, paint: (Math.max(v.paint, 0) + 1 + Math.floor(Math.random() * 14)) % 16 });
+  io.to(room.code).emit('vdmg', dmgState(v));
+  io.to(p.sid).emit('spray', { ok: true, vid: v.id });
 }
 
 const pickupState = (room) => room.pickups.map(t => Math.max(0, t - Date.now())); // ms bis ein Fundort wieder frei ist
@@ -464,6 +488,25 @@ function hurt(room, target, dmg, by, w) {
   if (target.hp <= 0) knockOut(room, target, by, w);
 }
 
+// Neustart nach K.o. oder Festnahme
+function respawnLater(room, target) {
+  setTimeout(() => {
+    if (!room.players.has(target.sid)) return;
+    const [x, z] = randomSidewalkSpot();
+    Object.assign(target, { alive: true, hp: 100, x, y: 0, z, anim: A.idle, ammo: WEAPONS.map(q => q.mag), reloadW: -1, budget: 12 });
+    io.to(room.code).emit('respawn', { id: target.id, x, z });
+  }, RESPAWN_MS);
+}
+
+// Festnahme: Waffen (außer Pistole) weg, Geldstrafe, Sterne weg
+function bust(room, p) {
+  p.alive = false; p.anim = A.scared; p.wanted = 0; p.cuff = 0;
+  if (p.veh) releaseVehicle(room, p);
+  p.own = WEAPONS.map((w, i) => i === 0); p.money = Math.max(0, p.money - BUST_FINE); sendOwn(p);
+  io.to(room.code).emit('ko', { id: p.id, by: 0, w: -4, score: 0, kos: p.kos });
+  respawnLater(room, p);
+}
+
 function knockOut(room, target, by, w) {
   target.alive = false; target.anim = A.down; target.kos++; target.wanted = 0;
   if (by === target) by = null;
@@ -471,12 +514,7 @@ function knockOut(room, target, by, w) {
   if (target.veh) releaseVehicle(room, target);
   io.to(room.code).emit('ko', { id: target.id, by: by?.id || 0, w, score: by?.score || 0, kos: target.kos });
   scarePeds(room, target.x, target.z, 14);
-  setTimeout(() => {
-    if (!room.players.has(target.sid)) return;
-    const [x, z] = randomSidewalkSpot();
-    Object.assign(target, { alive: true, hp: 100, x, y: 0, z, anim: A.idle, ammo: WEAPONS.map(q => q.mag), reloadW: -1, budget: 12 });
-    io.to(room.code).emit('respawn', { id: target.id, x, z });
-  }, RESPAWN_MS);
+  respawnLater(room, target);
 }
 
 // ---------- Autoschaden ----------
@@ -516,7 +554,7 @@ function explode(room, v) {
 
 // Wrack ersetzen: geparkte Autos stehen wieder an ihrem Platz, Verkehrsautos fahren neu los
 function resetCar(room, v) {
-  Object.assign(v, { hp: 100, dz: [0, 0, 0, 0], st: 0, y: 0, qx: 0, qz: 0, steer: 0, moved: Date.now(), vok: false });
+  Object.assign(v, { hp: 100, dz: [0, 0, 0, 0], st: 0, y: 0, qx: 0, qz: 0, steer: 0, moved: Date.now(), vok: false, chase: null, siren: false });
   if (v.isTraffic) startTraffic(room, v);
   else { const [x, z, yaw] = v.home; v.x = x; v.z = z; v.qy = Math.sin(yaw / 2); v.qw = Math.cos(yaw / 2); }
   io.to(room.code).emit('vdmg', dmgState(v));
@@ -524,7 +562,7 @@ function resetCar(room, v) {
 
 // ---------- Fahndung: Sterne, Stadtwache, Hubschrauber ----------
 const stars = (p) => Math.floor(p.wanted);
-function crime(p, pts) { p.wanted = Math.min(5.9, p.wanted + pts); p.seenT = Date.now(); }
+function crime(p, pts) { p.wanted = Math.min(6.9, p.wanted + pts); p.seenT = Date.now(); }
 const roadIdx = (v) => clamp(Math.round((v + HALF - ROAD / 2) / CELL), 0, GRID); // nächste Straße zu einer Koordinate
 // Flughöhe: über freiem Gelände niedrig, über und neben Gebäuden mit Abstand darüber
 function roofAt(x, z) {
@@ -534,6 +572,56 @@ function roofAt(x, z) {
 }
 const newCop = (id, x, z, y, state, target) => ({ id, x, y, z, yaw: 0, anim: A.idle, kind: Math.floor(Math.random() * COPS.length), hp: 60, state, target, cool: 1, idle: 0, timer: 0, node: null });
 
+// Platz für Nachschub: Kreuzung 45–100 m vom Gesuchten, kein Spieler näher als 40 m
+function spawnSpot(p, players) {
+  const spots = [];
+  for (let i = 0; i <= GRID; i++) for (let j = 0; j <= GRID; j++) {
+    const [x, z] = node(i, j), d = Math.hypot(x - p.x, z - p.z);
+    if (d > 45 && d < 100 && players.every(q => Math.hypot(x - q.x, z - q.z) > 40)) spots.push([x, z]);
+  }
+  return spots[Math.floor(Math.random() * spots.length)];
+}
+// Weg über das Straßennetz: von Kreuzung zu Kreuzung Richtung Ziel (s.node merkt sich die nächste); null = direkt hin
+function roadGoal(s, x, z, t, reach) {
+  s.node ||= [roadIdx(x), roadIdx(z)];
+  const far = (q) => Math.hypot(node(...q)[0] - t.x, node(...q)[1] - t.z), [nx, nz] = node(...s.node);
+  if (Math.hypot(nx - x, nz - z) < reach) {
+    const [i, j] = s.node, next = [[i + 1, j], [i - 1, j], [i, j + 1], [i, j - 1]].filter(([a, b]) => a >= 0 && b >= 0 && a <= GRID && b <= GRID && roadOpen(i, j, a, b)).sort((a, b) => far(a) - far(b))[0];
+    s.node = far(next) < far(s.node) ? next : 0; // näher geht es über Straßen nicht: direkt weiter
+  }
+  return s.node ? node(...s.node) : null;
+}
+
+// Streifenwagen im Einsatz: über Straßen zum Gesuchten, bei Sicht direkt; zu Fuß daneben anhalten und Wachen aussteigen lassen,
+// im Auto drauf zu (rammen übernimmt die Physik der Clients). Fährt kinematisch wie der Verkehr.
+function stepCruiser(room, v, dt, now) {
+  const c = v.chase, t = byId(room, c.target);
+  if (!t || !t.alive || !stars(t)) return endChase(room, v);
+  const dx = t.x - v.x, dz = t.z - v.z, d = Math.hypot(dx, dz), side = (z) => z < (RIVER.z0 + RIVER.z1) / 2;
+  const clear = d < 70 && side(v.z) === side(t.z) && !sightBlocked(v.x, v.z, t.x, t.z); // über den Fluss nur per Brücke
+  let gx = t.x, gz = t.z;
+  if (clear) c.node = null; else [gx, gz] = roadGoal(c, v.x, v.z, t, 7) || [gx, gz];
+  const yaw = yawOf(v), dy = ((Math.atan2(gx - v.x, gz - v.z) - yaw) % (2 * Math.PI) + 3 * Math.PI) % (2 * Math.PI) - Math.PI;
+  let want = !clear ? 18 : t.veh ? clamp(4 + d * 1.2, 0, 24) : clamp((d - 8) * 1.4, 0, 20);
+  if (Math.abs(dy) > 0.8) want = Math.min(want, 7);
+  c.v += clamp(want - c.v, -14 * dt, 7 * dt);
+  const ny = yaw + clamp(dy, -1, 1) * Math.min(2.4, c.v / 4.5) * dt;
+  v.x += Math.sin(ny) * c.v * dt; v.z += Math.cos(ny) * c.v * dt;
+  const o = pushOut(city.solids, v.x, v.z, 1.2); if (o) { v.x += o[0]; v.z += o[1]; c.v *= 0.9; }
+  v.qx = v.qz = 0; v.qy = Math.sin(ny / 2); v.qw = Math.cos(ny / 2); v.y = 0; v.steer = clamp(dy, -0.5, 0.5); v.moved = now;
+  if (!t.veh && clear && d < 13 && c.v < 1.5 && !c.out) { // anhalten, zwei Wachen steigen aus
+    c.out = true;
+    for (const s of [-1, 1]) { const slot = room.cops.indexOf(null); if (slot >= 0) room.cops[slot] = newCop(slot, v.x + Math.cos(ny) * 1.6 * s, v.z - Math.sin(ny) * 1.6 * s, 0, 'chase', t.id); }
+  }
+  if (c.out && d > 40) c.out = false;
+}
+function endChase(room, v) {
+  v.chase = null; v.siren = false;
+  const i = roadIdx(v.x), j = roadIdx(v.z), y = yawOf(v);
+  v.traffic = { path: [[v.x, v.z]], from: [i, j], at: [i, j], speed: 9 + room.rand() * 4, cur: 0, wait: 0, lastDir: [Math.sin(y), Math.cos(y)] };
+  planTraffic(v, room.rand);
+}
+
 // läuft 10x pro Sekunde
 function stepWanted(room, dt, now) {
   const cops = room.cops, players = [...room.players.values()];
@@ -542,7 +630,8 @@ function stepWanted(room, dt, now) {
     const n = stars(p);
     if (n) { // Sterne verfallen, wenn länger keine Wache in der Nähe war
       const h = room.heli;
-      if (cops.some(c => c && c.state !== 'down' && Math.hypot(c.x - p.x, c.z - p.z) < 45) || (h && Math.hypot(h.x - p.x, h.z - p.z) < 70)) p.seenT = now;
+      if (cops.some(c => c && c.state !== 'down' && Math.hypot(c.x - p.x, c.z - p.z) < 45) || (h && Math.hypot(h.x - p.x, h.z - p.z) < 70)
+        || room.vehicles.some(v => v.chase?.target === p.id && Math.hypot(v.x - p.x, v.z - p.z) < 45)) p.seenT = now;
       if (now - p.seenT > 12000 + 3000 * n) p.wanted = 0;
     } else if (p.wanted && now - p.seenT > 20000) p.wanted = 0; // Kleinkram verjährt
     const msg = stars(p) * 2 + (stars(p) && now - p.seenT > 3000 ? 1 : 0);
@@ -556,15 +645,23 @@ function stepWanted(room, dt, now) {
     if (h && h.target === p.id && Math.hypot(h.x - p.x, h.z - p.z) < 24 && Math.abs(h.y - h.want) < 3 && !pushOut(footprints, h.x, h.z, 2.5)) {
       p.copT = now; cops[slot] = newCop(slot, h.x + Math.random() * 4 - 2, h.z + Math.random() * 4 - 2, h.y - 2, 'rope', p.id);
     } else if (n < 3 || mine < 2) {
-      const spots = [];
-      for (let i = 0; i <= GRID; i++) for (let j = 0; j <= GRID; j++) {
-        const [x, z] = node(i, j), d = Math.hypot(x - p.x, z - p.z);
-        if (d > 45 && d < 100 && players.every(q => Math.hypot(x - q.x, z - q.z) > 40)) spots.push([x, z]);
-      }
-      if (!spots.length) continue;
-      const [x, z] = spots[Math.floor(Math.random() * spots.length)];
-      p.copT = now; cops[slot] = newCop(slot, x, z, 0, 'chase', p.id);
+      const at = spawnSpot(p, players); if (!at) continue;
+      p.copT = now; cops[slot] = newCop(slot, at[0], at[1], 0, 'chase', p.id);
     }
+  }
+  // Streifenwagen: die nächste freie Streife übernimmt; ist keine in der Nähe, kommt eine außer Sicht dazu
+  for (const p of players) {
+    const n = stars(p);
+    if (!n || !p.alive || now - (p.carT || 0) < 4000 || room.vehicles.filter(v => v.chase?.target === p.id).length >= CAR_COPS[n]) continue;
+    const free = room.vehicles.filter(v => v.cruiser && !v.driver && !v.chase && !v.st).sort((a, b) => Math.hypot(a.x - p.x, a.z - p.z) - Math.hypot(b.x - p.x, b.z - p.z));
+    const v = free[0]; if (!v) continue;
+    p.carT = now;
+    if (Math.hypot(v.x - p.x, v.z - p.z) > 160) {
+      const at = spawnSpot(p, players);
+      if (!at || players.some(q => Math.hypot(v.x - q.x, v.z - q.z) < 60)) continue;
+      [v.x, v.z] = at; v.y = 0;
+    }
+    v.traffic = null; v.siren = true; v.chase = { target: p.id, v: 8, node: null, out: false };
   }
   for (const c of cops) {
     if (!c) continue;
@@ -577,7 +674,13 @@ function stepWanted(room, dt, now) {
     }
     c.idle = 0;
     const dx = t.x - c.x, dz = t.z - c.z, d = Math.hypot(dx, dz) || 1, clear = !sightBlocked(c.x, c.z, t.x, t.z);
-    if (clear && d < 15) { // stehen, zielen, spritzen – ob es trifft, würfelt der Server
+    const car = t.veh ? room.vehicles[t.veh - 1] : null;
+    if (d < (car ? 3.2 : 1.5) && (!car || Math.hypot(car.vx, car.vz) < 1.5)) { // Festnahme: zu Fuß anfassen, im stehenden Auto rausziehen
+      c.yaw = Math.atan2(dx, dz); c.anim = A.idle; t.cuffNear = true;
+      if ((t.cuff = (t.cuff || 0) + dt) > 1.2) bust(room, t);
+      continue;
+    }
+    if (clear && d < 15 && stars(t) >= 3) { // ab 3 Sternen: stehen, zielen, schießen – ob es trifft, würfelt der Server
       c.yaw = Math.atan2(dx, dz); c.anim = A.idle | AIM_FLAG;
       if ((c.cool -= dt) > 0) continue;
       c.cool = 0.7;
@@ -589,20 +692,13 @@ function stepWanted(room, dt, now) {
     // laufen: bei freier Sicht direkt, sonst von Kreuzung zu Kreuzung (Straßen sind immer frei)
     let gx = t.x, gz = t.z;
     if (clear) c.node = null;
-    else {
-      c.node ||= [roadIdx(c.x), roadIdx(c.z)];
-      const [nx, nz] = node(...c.node), far = (q) => Math.hypot(node(...q)[0] - t.x, node(...q)[1] - t.z);
-      if (Math.hypot(nx - c.x, nz - c.z) < 3) {
-        const [i, j] = c.node, next = [[i + 1, j], [i - 1, j], [i, j + 1], [i, j - 1]].filter(([a, b]) => a >= 0 && b >= 0 && a <= GRID && b <= GRID && roadOpen(i, j, a, b)).sort((a, b) => far(a) - far(b))[0];
-        if (far(next) < far(c.node)) c.node = next; else c.node = 0; // näher geht es über Straßen nicht: direkt weiter
-      }
-      if (c.node) [gx, gz] = node(...c.node);
-    }
+    else [gx, gz] = roadGoal(c, c.x, c.z, t, 3) || [gx, gz];
     const mx = gx - c.x, mz = gz - c.z, ml = Math.hypot(mx, mz) || 1, go = Math.min(ml, 5.6 * dt);
     c.x += mx / ml * go; c.z += mz / ml * go;
     const o = pushOut(city.solids, c.x, c.z, 0.45); if (o) { c.x += o[0]; c.z += o[1]; }
     c.yaw = Math.atan2(mx, mz); c.anim = A.sprint;
   }
+  for (const p of players) { if (!p.cuffNear) p.cuff = 0; p.cuffNear = false; }
   // Hubschrauber: fliegt den Gesuchten an, bleibt über ihm stehen, zieht ab, wenn niemand mehr 3 Sterne hat
   let h = room.heli;
   if (top && !h) { const a = Math.random() * 6.28; h = room.heli = { x: top.x + Math.cos(a) * 160, y: 80, z: top.z + Math.sin(a) * 160, yaw: 0, target: top.id, want: 80, gone: 0 }; }
@@ -638,6 +734,7 @@ function tick() {
       if (v.st === 1 && now >= v.boomAt) explode(room, v);
       else if (v.st === 2 && now >= v.resetAt) resetCar(room, v);
       else if (v.traffic && !v.driver && !v.st) stepTraffic(room, v, dt);
+      else if (v.chase && !v.driver && !v.st) stepCruiser(room, v, dt, now);
     }
     for (const p of room.peds) stepPed(room, p, dt);
     const players = [...room.players.values()].map(p => [p.id, r2(p.x), r2(p.y), r2(p.z), r2(p.yaw), p.anim, p.veh, p.weap, r2(p.pitch), p.hp]);

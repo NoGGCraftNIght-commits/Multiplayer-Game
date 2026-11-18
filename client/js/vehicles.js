@@ -15,6 +15,8 @@ const ramp = (u, from) => { const t = Math.min(1, Math.max(0, (u - from) / (1 - 
 const rnd = (a, b) => a + Math.random() * (b - a);
 const BURNT = stdMat({ color: 0x141312, roughness: 1 }), HOLE = new THREE.MeshBasicMaterial({ color: 0x07080a });
 const GREY = [0.62, 0.62, 0.64], DARK = [0.07, 0.07, 0.07], FIRE = [3.2, 1.1, 0.18], EMBER = [2.4, 0.35, 0.05];
+// Lack: fester Ton (Taxi, Polizei …), sonst je Auto-Nummer (alle sehen dieselbe Farbe); Lackiererei setzt einen Index
+const paintOf = (type, id, i) => paintMat(i >= 0 ? PAINTS[i] : fixedPaint(type) ?? PAINTS[(id * 7 + 3) % PAINTS.length]);
 const lamps = new Map();
 function lampGeo(type, ud) {
   if (lamps.has(type)) return lamps.get(type);
@@ -101,7 +103,7 @@ export class Vehicles {
     const type = VEHICLE_TYPES[s[10]] || 'sedan';
     const cfg = VEHICLES[type];
     const proto = carModel(type), model = proto.clone(true), ud = proto.userData;
-    const paint = paintMat(fixedPaint(type) ?? PAINTS[(s[0] * 7 + 3) % PAINTS.length]); // Lackfarbe fest je Auto-Nummer: alle sehen dieselbe
+    const paint = paintOf(type, s[0], -1);
     model.traverse(o => { if (o.name === 'paint') o.material = paint; });
     const group = new THREE.Group(); group.add(model); this.scene.add(group);
     // Räder direkt an die Gruppe hängen (drehen und lenken unabhängig von der verformbaren Karosserie)
@@ -136,7 +138,7 @@ export class Vehicles {
 
   snapshot(t, s) {
     const v = this.list[s[0]] || this.add(s);
-    v.driver = s[9]; v.traffic = !!s[11];
+    v.driver = s[9]; v.traffic = !!s[11]; v.siren = s[11] === 2;
     if (this.mine?.v === v) return;
     v.buf.push(t, s);
   }
@@ -297,6 +299,13 @@ export class Vehicles {
       if (v.st === 2) { o.userData.mat ||= o.material; o.material = BURNT; } else if (o.userData.mat) o.material = o.userData.mat;
     });
     if (v.st === 2 && was !== 2 && !quiet) this.boom(v);
+    if (s[7] != null && s[7] !== v.paint) { v.paint = s[7]; const m = paintOf(v.type, v.id, v.paint); v.model.traverse(o => { if (o.name === 'paint' && v.st !== 2) o.material = m; }); } // Lackiererei
+  }
+
+  // Sprühnebel in der neuen Lackfarbe rund ums Auto
+  mist(v) {
+    const m = paintOf(v.type, v.id, v.paint ?? -1).color, c = [m.r * 1.4, m.g * 1.4, m.b * 1.4];
+    for (let k = 0; k < 40; k++) this.smoke.emit(v.group.localToWorld(_p.set(rnd(-1.4, 1.4), rnd(0.3, 1.8), rnd(-2.4, 2.4))), rnd(-0.6, 0.6), rnd(0.3, 1.2), rnd(-0.6, 0.6), rnd(1, 2), c, 0.7);
   }
 
   // Blech je Zone zur Fahrzeugmitte drücken (immer aus der Originalform gerechnet: 0 Schaden = wieder heil)
