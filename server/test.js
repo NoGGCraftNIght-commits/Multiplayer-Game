@@ -2,7 +2,7 @@
 // Aufbau per direktem Zugriff auf den Serverzustand (place), geprüft wird über das Netzprotokoll.
 import assert from 'node:assert/strict';
 import { io as connect } from 'socket.io-client';
-import { MAX_PLAYERS, WEAPONS, AVATARS, buildCity, node, RIVER, JUMPS, ROAD, roadCenter, riverY, pushOut, START_MONEY, SPRAYS, SPRAY_COST, RESPAWN, DEATH_FEE } from '../client/js/shared.js';
+import { A, MAX_PLAYERS, WEAPONS, AVATARS, buildCity, node, RIVER, JUMPS, ROAD, roadCenter, riverY, pushOut, START_MONEY, SPRAYS, SPRAY_COST, RESPAWN, DEATH_FEE } from '../client/js/shared.js';
 
 process.env.PORT ||= '3987';
 const { httpServer, io, rooms } = await import('./server.js');
@@ -207,6 +207,19 @@ const back2 = once(a, 'respawn', m => m.id === ra.id); shootA();
 const r2 = await back2;
 assert.deepEqual([pa.own[2], pa.money, Math.abs(r2.z - RESPAWN.hospital[1]) < 1 && Math.abs(r2.x - RESPAWN.hospital[0]) < 5], [false, 300 - DEATH_FEE, true], 'K.o.: Waffen weg, Gebühr, Krankenhaus');
 step('Pickups, Weste, Krankenhaus');
+
+// --- Passanten: zwei Pistolentreffer -> umgefallen und liegen geblieben, danach woanders wieder unterwegs
+const pd = room.peds.find(q => !q.clerk && q.state === 'walk');
+Object.assign(pa, { ammo: WEAPONS.map(w => w.mag), reloadW: -1, credit: 2 });
+const shootPed = () => { place(pa, pd.x + 3, pd.z); a.emit('shoot', { w: 0, o: [pa.x, 1.4, pa.z], d: [-1, 0, 0], seed: 1 }); a.emit('hit', { t: 'n', id: pd.id, w: 0 }); };
+const died = once(a, 'pedhit', m => m.id === pd.id && m.dead);
+shootPed(); await sleep(300); shootPed();
+await died;
+assert.deepEqual([pd.state, pd.anim], ['dead', A.down], 'Passant fällt um und bleibt liegen');
+pd.timer = 0; await sleep(200);
+assert(pd.state === 'walk' && pd.hp > 0, 'Passant geht danach woanders wieder los');
+pa.wanted = 0;
+step('Passanten fallen um');
 
 // --- Verkehr fließt (bleibt nicht hinter geparkten Autos hängen)
 const traffic = room.vehicles.filter(q => q.traffic), from = traffic.map(q => [q.x, q.z]);

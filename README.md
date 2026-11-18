@@ -100,6 +100,9 @@ Trackpad-Tipp: Mit Pfeiltasten umschauen und mit V schießen, dann muss man nich
   Polizisten dich festnehmen (anfassen bzw. aus dem stehenden Auto ziehen), ab 3 Sternen schießen sie und ein
   Hubschrauber kommt, aus dem sich weitere abseilen. Festnahme: Neustart vor der Polizeiwache, Waffen weg, 100 $ Strafe.
   Blinken die Sterne, sieht dich gerade niemand: Bleib einige Sekunden außer Sicht, dann ist die Fahndung vorbei.
+- **Passanten:** Zwei Pistolentreffer (eine Schrotladung) und sie fallen um, bleiben 20 Sekunden mit Blutlache liegen
+  und tauchen dann woanders wieder auf. Mit über 30 km/h angefahren fliegen sie durch die Luft und rutschen weg,
+  langsamer fallen sie nur hin und stehen wieder auf. Explosionen schleudern alle in der Nähe weg.
 - **Abtauchen:** Ein weißer Stern (Gehweg-Ecken) senkt die Fahndung um einen Stern. Durch eines der drei
   „LACK & SPRAY“-Portale fahren (rosa Punkte auf der Karte) kostet 100 $: Fahndung weg, Auto repariert, neue Farbe.
 - **Radio:** Im Auto läuft ein Sender; R wechselt zwischen „Neon 88 FM“, „Kassette 101“ und aus.

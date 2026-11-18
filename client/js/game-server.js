@@ -15,6 +15,8 @@ const SEED = 1337;           // alle Räume nutzen dieselbe Stadt
 const PEDS_PER_ROOM = 90;
 const TRAFFIC_PER_ROOM = 18;
 const RESPAWN_MS = 4000;
+const PED_HP = 25;           // Passanten: zwei Pistolentreffer
+const CORPSE_S = 20;         // so lange liegt ein umgefallener Passant, dann geht er woanders neu los
 const CRASH = 1.3;           // Schadenspunkte am Auto je m/s plötzlichem Tempoverlust
 const FUSE_MS = 4500;        // brennendes Auto explodiert nach dieser Zeit
 const WRECK_MS = 25000;      // so lange bleibt ein Wrack liegen
@@ -119,14 +121,14 @@ function createRoom(code) {
   for (let k = 0; k < PEDS_PER_ROOM; k++) {
     const block = walkable[Math.floor(rand() * walkable.length)];
     room.peds.push({ id: k, avatar: Math.floor(rand() * AVATARS.length), block, s: rand() * 4 * 44, dir: rand() < 0.5 ? 1 : -1,
-      base: 1.0 + rand() * 0.35, state: 'walk', timer: 3 + rand() * 10, x: 0, z: 0, yaw: 0, anim: A.walk, fleeFrom: null });
+      base: 1.0 + rand() * 0.35, hp: PED_HP, state: 'walk', timer: 3 + rand() * 10, x: 0, z: 0, yaw: 0, anim: A.walk, fleeFrom: null });
   }
   // Verkäufer hinter den Tresen (stehen, schauen zur Tür bzw. in den Raum)
   for (const b of city.buildings) {
     const it = b.items?.find(i => ['counter', 'bar', 'desk', 'glass'].includes(i[0]));
     if (!it) continue;
     const bar = it[0] === 'bar', [x, z] = localPoint(b, bar ? it[1] + 1 : it[1], bar ? it[2] : it[2] - 1);
-    room.peds.push({ id: room.peds.length, avatar: Math.floor(rand() * AVATARS.length), clerk: true, state: 'clerk', timer: 0, x, z, yaw: b.rot - (bar ? Math.PI / 2 : 0), anim: A.idle });
+    room.peds.push({ id: room.peds.length, avatar: Math.floor(rand() * AVATARS.length), clerk: true, hp: PED_HP, state: 'clerk', timer: 0, x, z, yaw: b.rot - (bar ? Math.PI / 2 : 0), anim: A.idle });
   }
   rooms.set(code, room);
   return room;
@@ -204,6 +206,12 @@ function stepTraffic(room, v, dt) {
 
 function stepPed(room, p, dt) {
   p.timer -= dt;
+  if (p.state === 'dead') { // liegt; vom Auto erwischt rutscht er noch aus
+    p.anim = A.down;
+    if (p.kv) { p.x += p.kv[0] * dt; p.z += p.kv[1] * dt; const f = Math.exp(-4 * dt); p.kv[0] *= f; p.kv[1] *= f; const o = pushOut(city.solids, p.x, p.z, 0.3); if (o) { p.x += o[0]; p.z += o[1]; } }
+    if (p.timer <= 0) respawnPed(room, p);
+    return;
+  }
   if (p.clerk) { p.anim = p.state === 'down' ? A.down : p.state === 'react' || p.state === 'flee' ? A.scared : p.state === 'greet' ? A.wave : A.idle; if (p.state !== 'clerk' && p.timer <= 0) p.state = 'clerk'; return; }
   const b = city.blocks[p.block], loop = sidewalkLoop(b);
   const per = (b.x1 - b.x0 - 4) * 4, side = per / 4; // Umfang des Gehweg-Rundwegs (quadratischer Block)
@@ -247,6 +255,23 @@ function stepPed(room, p, dt) {
   p.x = x; p.z = z;
 }
 
+// Passant umfallen lassen; (fx, fz) = Schütze oder Auto: er dreht sich dorthin und kippt davon weg nach hinten
+function killPed(room, p, fx, fz) {
+  Object.assign(p, { state: 'dead', timer: CORPSE_S, hp: 0, anim: A.down, kv: null, fleeFrom: null });
+  p.yaw0 ??= p.yaw; p.yaw = Math.atan2(fx - p.x, fz - p.z);
+}
+// Nach der Liegezeit: Verkäufer steht wieder am Tresen, Passant geht in einem Block außer Sicht neu los
+function respawnPed(room, p) {
+  Object.assign(p, { hp: PED_HP, kv: null, timer: 5, state: p.clerk ? 'clerk' : 'walk' });
+  if (p.clerk) { p.yaw = p.yaw0; return; } // Verkäufer schaut wieder in den Laden
+  const players = [...room.players.values()];
+  for (let k = 0; k < 12; k++) {
+    const b = city.blocks[p.block = walkable[Math.floor(room.rand() * walkable.length)]], per = (b.x1 - b.x0 - 4) * 4;
+    [p.x, p.z] = pedPos(sidewalkLoop(b), per, p.s = room.rand() * per);
+    if (players.every(q => Math.hypot(q.x - p.x, q.z - p.z) > 60)) break;
+  }
+}
+
 function pedPos(loop, per, s) {
   const side = per / 4, i = Math.floor(s / side) % 4, t = (s - i * side) / side;
   const [ax, az] = loop[i], [bx, bz] = loop[(i + 1) % 4];
@@ -255,7 +280,7 @@ function pedPos(loop, per, s) {
 
 function scarePeds(room, x, z, radius) {
   for (const p of room.peds) {
-    if (p.state === 'down' || p.state === 'react' || p.state === 'cross') continue;
+    if (p.state === 'down' || p.state === 'dead' || p.state === 'react' || p.state === 'cross') continue;
     if (Math.hypot(p.x - x, p.z - z) < radius) { p.state = 'flee'; p.timer = 5 + room.rand() * 3; p.fleeFrom = [x, z]; }
   }
 }
@@ -415,13 +440,18 @@ io.on('connection', (socket) => {
     const ok = (x, z) => isCar ? Math.hypot(x - car.x, z - car.z) < 7 : claimShot(me, wi, x, z, now);
     if (h.t === 'n') {
       const p = room.peds[id];
-      if (!p || !ok(p.x, p.z)) return;
-      if (isCar) { p.state = 'down'; p.timer = 2.5; crime(me, 1); }
-      else if (p.state !== 'down') {
-        if (now - (p.wetT || 0) > 3000) crime(me, 0.5); // ein Vorfall, nicht jeder Tropfen
-        p.wetT = now; p.state = 'react'; p.timer = 0.9; p.fleeFrom = [me.x, me.z];
+      if (!p || p.state === 'dead' || !ok(p.x, p.z)) return;
+      if (isCar) { // angefahren: ab 30 km/h fliegt er weg und bleibt liegen, langsamer fällt er nur um
+        crime(me, 1);
+        if (Math.hypot(car.vx, car.vz) > 8) { killPed(room, p, car.x, car.z); p.kv = [car.vx * 0.7, car.vz * 0.7]; }
+        else { p.state = 'down'; p.timer = 2.5; }
+      } else {
+        if (now - (p.wetT || 0) > 3000) crime(me, 0.5); // ein Vorfall, nicht jeder Schuss
+        p.wetT = now;
+        if ((p.hp -= WEAPONS[wi].damage) <= 0) { killPed(room, p, me.x, me.z); crime(me, 0.5); scarePeds(room, p.x, p.z, 20); }
+        else if (p.state !== 'down') { p.state = 'react'; p.timer = 0.9; p.fleeFrom = [me.x, me.z]; }
       }
-      io.to(room.code).emit('pedhit', { id: p.id, by: me.id, car: isCar });
+      io.to(room.code).emit('pedhit', { id: p.id, by: me.id, car: isCar, dead: p.state === 'dead' });
       return;
     }
     if (h.t === 'c') { // Stadtwache getroffen: bringt Sterne
@@ -429,7 +459,7 @@ io.on('connection', (socket) => {
       if (!c || c.state === 'down' || !ok(c.x, c.z)) return;
       c.hp -= isCar ? 999 : WEAPONS[wi].damage;
       crime(me, 0.25);
-      if (c.hp <= 0) { c.state = 'down'; c.timer = 6; c.anim = A.down; crime(me, 1); }
+      if (c.hp <= 0) { c.state = 'down'; c.timer = 10; c.anim = A.down; c.yaw = Math.atan2((car || me).x - c.x, (car || me).z - c.z); crime(me, 1); } // kippt vom Schützen weg
       return;
     }
     const target = byId(room, id);
@@ -440,7 +470,7 @@ io.on('connection', (socket) => {
   socket.on('greet', (pid) => {
     if (!me) return;
     const p = room.peds[pid | 0];
-    if (!p || Math.hypot(p.x - me.x, p.z - me.z) > 4 || p.state === 'flee' || p.state === 'down') return;
+    if (!p || Math.hypot(p.x - me.x, p.z - me.z) > 4 || p.state === 'flee' || p.state === 'down' || p.state === 'dead') return;
     p.state = 'greet'; p.timer = 2.2; p.faceTo = [me.x, me.z];
     io.to(room.code).emit('say', { ped: p.id, line: Math.floor(Math.random() * 1000), to: me.id });
   });
@@ -553,7 +583,7 @@ function explode(room, v) {
     const dmg = p.veh === v.id + 1 ? 100 : p.veh ? 0 : Math.round(110 * (1 - Math.hypot(p.x - v.x, p.z - v.z) / 8));
     if (dmg > 0) hurt(room, p, dmg, by, -2);
   }
-  for (const q of room.peds) if (Math.hypot(q.x - v.x, q.z - v.z) < 8) { q.state = 'down'; q.timer = 3; }
+  for (const q of room.peds) if (q.state !== 'dead' && Math.hypot(q.x - v.x, q.z - v.z) < 8) { killPed(room, q, v.x, v.z); q.kv = [(q.x - v.x) * 1.5, (q.z - v.z) * 1.5]; } // Druckwelle schleudert weg
   scarePeds(room, v.x, v.z, 30);
   if (by) crime(by, 1);
   for (const o of room.vehicles) if (o !== v && Math.hypot(o.x - v.x, o.z - v.z) < 7) hurtCar(room, o, 45, zoneOf(o, v.x - o.x, v.z - o.z), by); // Kettenreaktion

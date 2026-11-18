@@ -18,6 +18,7 @@ const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const COLORS = [['#ff5aa0', 'Pink'], ['#35c2ff', 'Blau'], ['#ffd23f', 'Gelb'], ['#7dffb0', 'Mint'], ['#b44dff', 'Lila'], ['#ff8a1f', 'Orange'], ['#ff4d4d', 'Rot'], ['#21e6c8', 'Türkis'], ['#ffffff', 'Weiß'], ['#9aa7ff', 'Flieder']];
 const HELLO = ['Hi!', 'Schönes Wetter, oder?', 'Na, alles klar?', 'Tolle Farbe!', 'Moin!', 'Pass auf die Autos auf!', 'Ab an den Strand!', 'Hallo du!'];
+const UP = new THREE.Vector3(0, 1, 0), BLOOD = new THREE.Color(0x4a0606);
 const OUCH = ['Hey!', 'Nicht schießen!', 'Hilfe!', 'Aua!', 'Bist du verrückt?', 'Polizei!'];
 const WALK_V = 1.5, RUN_V = 3.6, SPRINT_V = 6.4, RADIUS = 0.38;
 
@@ -301,7 +302,12 @@ function bindNet() {
     const p = players.get(s.id), ch = p?.char || cops[-1 - s.id]?.char;
     combat.spawn(s, false, p?.color); if (ch) ch.kick = 1;
   });
-  net.on('pedhit', ({ id }) => hud.say(OUCH[(id + Math.floor(performance.now())) % OUCH.length], pedHead(id), 1.6));
+  net.on('pedhit', ({ id, car, dead }) => {
+    const p = peds[id]; if (!p) return;
+    if (car) p.fly = 0; // angefahren: kurz durch die Luft
+    if (dead) setTimeout(() => combat.splat(new THREE.Vector3(p.x, world.groundY(p.x, p.z) + 0.02, p.z), UP, BLOOD, 0.8), car ? 1200 : 700); // Blutlache unter dem Liegenden
+    else hud.say(OUCH[(id + Math.floor(performance.now())) % OUCH.length], pedHead(id), 1.6);
+  });
   net.on('say', ({ ped, line }) => hud.say(HELLO[line % HELLO.length], pedHead(ped), 2.6));
   net.on('horn', ({ vid }) => { const v = vehicles.list[vid]; if (v) audio.horn(v.pos); });
   net.on('emote', ({ id, e }) => hud.say(e ? '👎' : '👋', () => { const p = players.get(id); return p && head(p); }, 1.8));
@@ -321,7 +327,7 @@ function bindNet() {
 function targets() {
   const out = [];
   for (const p of players.values()) if (p.alive && !p.veh && p.char.root.visible) out.push({ t: 'p', id: p.id, x: p.pos.x, y: p.pos.y, z: p.pos.z });
-  peds.forEach((p, i) => { if (p.char?.root.visible) out.push({ t: 'n', id: i, x: p.x, y: SLAB, z: p.z }); });
+  peds.forEach((p, i) => { if (p.char?.root.visible && !p.char.down) out.push({ t: 'n', id: i, x: p.x, y: SLAB, z: p.z }); });
   cops.forEach((c, i) => { if (c.on && c.char && !c.down) out.push({ t: 'c', id: i, x: c.pos.x, y: c.pos.y, z: c.pos.z }); });
   if (me.alive && !me.veh) out.push({ me: true, x: me.pos.x, y: me.pos.y, z: me.pos.z });
   return out;
@@ -587,7 +593,9 @@ function updatePeds(dt, t) {
     }
     if (p.char) p.char.root.visible = near;
     if (!near || !p.char) continue;
-    p.char.root.position.set(p.x, SLAB, p.z); p.char.root.rotation.y = a[o + 2] + turn(a[o + 2], b[o + 2]) * k;
+    p.char.root.position.set(p.x, SLAB, p.z);
+    if (p.fly != null) { const u = (p.fly += dt) / 0.75; if (u >= 1) p.fly = null; else p.char.root.position.y += 6 * u * (1 - u); } // Bogen nach dem Aufprall
+    p.char.root.rotation.y = a[o + 2] + turn(a[o + 2], b[o + 2]) * k;
     p.char.play(b[o + 3], 0.25, Math.hypot(b[o] - a[o], b[o + 1] - a[o + 1]) * PED_HZ);
     if ((p.x - c.x) * fwd.x + (p.z - c.z) * fwd.z > -4) p.char.update(dt); // hinter der Kamera nicht animieren
   }

@@ -12,7 +12,7 @@ const ONCE = new Set(['interact', 'wave', 'no', 'shrug']);
 const FEMALE = { idle: 'f_idle', walk: 'f_walk', run: 'f_run' };
 const PACE = { walk: 1.01, run: 2.89, sprint: 5.83, f_walk: 1.22, f_run: 2.75 }; // m/s, die ein Clip von Natur aus zurücklegt
 const UP = new THREE.Vector3(0, 1, 0), ZERO = new THREE.Vector3();
-const _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _d = new THREE.Vector3(), _m = new THREE.Matrix4();
+const _t = new THREE.Vector3(), _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _d = new THREE.Vector3(), _m = new THREE.Matrix4();
 const guns = {}, rigs = {};
 let clips;
 
@@ -122,7 +122,19 @@ export class Character {
     }
     this.mixer = new THREE.AnimationMixer(this.model);
     this.actions = {};
-    this.aim = new THREE.Vector3(0, 0, 1); this.aiming = false; this.aimW = 0; this.kick = 0; this.tip = 0; this.down = false;
+    this.aim = new THREE.Vector3(0, 0, 1); this.aiming = false; this.aimW = 0; this.kick = 0; this.tip = 0; this.tipV = 0; this.down = false;
+    // Liegepose: Arme und Beine locker ausgebreitet statt steif wie ein Brett, je Figur etwas anders.
+    // Ziele im Figurenraum der liegenden Figur: Kopf nach -z (nach hinten gefallen), Gesicht nach oben, s = Körperseite.
+    this.model.updateMatrixWorld(true);
+    const side = Math.sign(this.model.getObjectByName('Bip01_L_UpperArm').getWorldPosition(_v).x) || 1, r = Math.random, bent = r() < 0.5 ? 1 : -1;
+    this.limbs = [];
+    for (const s of [1, -1]) {
+      const L = s === 1 ? 'L' : 'R', x = s * side, knee = s === bent, up = 0.2 * r(), head = -0.4 + 0.8 * r();
+      for (const [name, dx, dy, dz] of [['UpperArm', 0.9, 0.05 + up, head], ['Forearm', 0.55, 0.15, head - 0.5], ['Thigh', 0.25, knee ? 0.5 : 0, 0.85], ['Calf', 0.15, knee ? -0.6 : -0.02, 0.8]]) {
+        const bone = this.model.getObjectByName(`Bip01_${L}_${name}`), child = bone.children.find(c => c.isBone);
+        this.limbs.push([bone, child.position.clone().normalize(), new THREE.Vector3(x * dx, dy, dz).normalize()]);
+      }
+    }
     this.weapon = -1; this.current = null;
     this.play('idle', 0);
   }
@@ -167,8 +179,12 @@ export class Character {
 
   update(dt) {
     this.mixer.update(dt);
-    this.tip += ((this.down ? 1 : 0) - this.tip) * Math.min(1, dt * 7); // K.o.: nach hinten umfallen
+    if (this.down) { // umkippen wie ein fallender Körper: erst langsam, dann schnell, kurz vom Boden abprallen
+      this.tipV += dt * (3 + 14 * this.tip); this.tip += this.tipV * dt;
+      if (this.tip >= 1) { this.tip = 1; this.tipV = this.tipV > 1.5 ? -this.tipV * 0.18 : 0; }
+    } else { this.tip = Math.max(0, this.tip - dt * 2.5); this.tipV = 0; }
     this.model.rotation.x = -this.tip * Math.PI / 2; this.model.position.y = this.tip * 0.14;
+    if (this.tip > 0.01) for (const [bone, axis, dir] of this.limbs) point(bone, axis, _t.copy(dir).applyQuaternion(this.root.quaternion), this.tip);
     this.kick = Math.max(0, this.kick - dt * 7);
     this.aimW += ((this.aiming && this.blaster && !this.down ? 1 : 0) - this.aimW) * Math.min(1, dt * 14);
     if (this.aimW < 0.01) return;
