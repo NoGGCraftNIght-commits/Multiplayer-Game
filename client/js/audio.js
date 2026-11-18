@@ -1,5 +1,50 @@
 import { assets } from './assets.js';
 
+// Waffenklänge aus Code (keine Fremdaufnahmen): Knall = Rauschen, Wumms = fallender Sinus, Hall + Echo von den Hauswänden.
+// je Waffe: [Knall ms, Wumms Hz, Wumms s, Hall s, Lautstärke, Echo]
+const GUN_SFX = [[12, 140, 0.08, 0.55, 0.8, 0.3], [7, 175, 0.05, 0.4, 0.62, 0.25], [32, 72, 0.17, 1.1, 1, 0.38], [9, 105, 0.09, 0.85, 0.92, 0.34]];
+function buffer(ctx, sec, fn) {
+  const sr = ctx.sampleRate, b = ctx.createBuffer(2, Math.ceil(sr * sec), sr);
+  for (let ch = 0; ch < 2; ch++) { const d = b.getChannelData(ch); fn(d, sr); for (let i = 0; i < d.length; i++) d[i] = Math.tanh(d[i]); }
+  return b;
+}
+// kurzes Metallgeräusch (Klick, Klack, Hülse) bei Sekunde at
+function clack(d, sr, at, amp, freqs, decay) {
+  const i0 = Math.floor(at * sr), n = Math.min(d.length - i0, Math.floor(decay * 6 * sr));
+  for (let i = 0; i < n; i++) {
+    const t = i / sr, e = Math.exp(-t / decay);
+    let v = (Math.random() * 2 - 1) * Math.exp(-t / 0.002);
+    for (const f of freqs) v += Math.sin(6.283 * f * t) * 0.5;
+    d[i0 + i] += amp * v * e;
+  }
+}
+function makeSfx(ctx) {
+  const out = {};
+  GUN_SFX.forEach(([crack, hz, boom, tail, vol, echo], k) => out['gun' + k] = buffer(ctx, tail + 0.25, (d, sr) => {
+    let prev = 0, lp = 0, ph = 0;
+    for (let i = 0; i < d.length; i++) {
+      const t = i / sr, w = Math.random() * 2 - 1;
+      const c = (w - prev) * Math.exp(-t * 1000 / crack); prev = w;
+      lp += (w - lp) * 0.05; ph += 6.283 * hz * (1 + 1.6 * Math.exp(-t * 35)) / sr;
+      d[i] = c * 0.9 + Math.sin(ph) * Math.exp(-t / boom) * 1.3 + lp * Math.exp(-t / (tail * 0.28)) * Math.min(1, t * 80) * 2.4;
+    }
+    const e = Math.floor(sr * 0.12); // Echo: rückwärts, damit es nur einmal widerhallt
+    for (let i = d.length - 1; i >= e; i--) d[i] += d[i - e] * echo;
+    for (let i = 0; i < d.length; i++) d[i] *= vol * 1.4;
+  }));
+  out.click = buffer(ctx, 0.08, (d, sr) => clack(d, sr, 0, 0.5, [2400, 3900], 0.006));
+  out.reload = buffer(ctx, 1.2, (d, sr) => { clack(d, sr, 0.04, 0.5, [900, 1700], 0.012); clack(d, sr, 0.5, 0.8, [600, 1300], 0.02); clack(d, sr, 0.95, 0.7, [1100, 2300], 0.015); });
+  out.pump = buffer(ctx, 0.45, (d, sr) => { clack(d, sr, 0, 0.8, [500, 1150], 0.025); clack(d, sr, 0.2, 0.9, [650, 1400], 0.022); });
+  out.casing = buffer(ctx, 0.4, (d, sr) => { clack(d, sr, 0, 0.35, [3150, 4700, 6250], 0.03); clack(d, sr, 0.12, 0.2, [3150, 4700, 6250], 0.025); clack(d, sr, 0.2, 0.1, [3150, 4700], 0.02); });
+  out.flesh = buffer(ctx, 0.15, (d, sr) => { let lp = 0; for (let i = 0; i < d.length; i++) { const t = i / sr; lp += (Math.random() * 2 - 1 - lp) * 0.08; d[i] = (lp * 3 + Math.sin(6.283 * 85 * t)) * Math.exp(-t / 0.03) * 0.8; } });
+  out.ricochet = buffer(ctx, 0.5, (d, sr) => {
+    let ph = 0;
+    for (let i = 0; i < d.length; i++) { const t = i / sr; ph += 6.283 * (2700 - 1500 * t / 0.5 + 60 * Math.sin(t * 90)) / sr; d[i] = Math.sin(ph) * 0.35 * Math.exp(-t / 0.15) + (Math.random() * 2 - 1) * Math.exp(-t / 0.004) * 0.6; }
+  });
+  out.bimpact = buffer(ctx, 0.12, (d, sr) => { let lp = 0; for (let i = 0; i < d.length; i++) { const t = i / sr, w = Math.random() * 2 - 1; lp += (w - lp) * 0.25; d[i] = (w * Math.exp(-t / 0.003) + lp * 1.5 * Math.exp(-t / 0.025)) * 0.7; } });
+  return out;
+}
+
 // Kleine WebAudio-Schicht: Samples mit Entfernungsdämpfung + Stereo, synthetischer Motor & Hupe.
 export class Audio {
   constructor() { this.enabled = true; this.buffers = {}; this.listener = { x: 0, z: 0, yaw: 0 }; }
@@ -11,23 +56,27 @@ export class Audio {
     for (const [n, buf] of Object.entries(assets.sounds)) {
       try { this.buffers[n] = await this.ctx.decodeAudioData(buf.slice(0)); } catch { /* Format nicht unterstützt (z. B. ältere Safari) -> stumm */ }
     }
+    Object.assign(this.buffers, makeSfx(this.ctx));
   }
 
   setEnabled(on) { this.enabled = on; if (this.master) this.master.gain.value = on ? 0.7 : 0; }
 
-  play(name, { pos = null, vol = 1, rate = 1 } = {}) {
+  // fall = Abnahme mit der Entfernung (Schüsse tragen weit), muffle = in der Ferne dumpfer
+  play(name, { pos = null, vol = 1, rate = 1, delay = 0, fall = 0.004, muffle = false } = {}) {
     const b = this.buffers[name]; if (!b || !this.ctx) return;
-    let g = vol, pan = 0;
+    let g = vol, pan = 0, d = 0;
     if (pos) {
-      const dx = pos.x - this.listener.x, dz = pos.z - this.listener.z, d = Math.hypot(dx, dz);
-      g *= 1 / (1 + d * d * 0.004); if (g < 0.02) return;
+      const dx = pos.x - this.listener.x, dz = pos.z - this.listener.z; d = Math.hypot(dx, dz);
+      g *= 1 / (1 + d * d * fall); if (g < 0.02) return;
       const ang = Math.atan2(dx, dz) - this.listener.yaw; pan = Math.max(-1, Math.min(1, -Math.sin(ang)));
     }
     const s = this.ctx.createBufferSource(); s.buffer = b; s.playbackRate.value = rate * (0.94 + Math.random() * 0.12);
     const gain = this.ctx.createGain(); gain.gain.value = g;
+    let n = s;
+    if (muffle && d > 8) { const f = this.ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 18000 / (1 + d / 15); n = n.connect(f); }
     const p = this.ctx.createStereoPanner ? this.ctx.createStereoPanner() : null;
-    if (p) { p.pan.value = pan; s.connect(gain).connect(p).connect(this.master); } else s.connect(gain).connect(this.master);
-    s.start();
+    if (p) { p.pan.value = pan; n.connect(gain).connect(p).connect(this.master); } else n.connect(gain).connect(this.master);
+    s.start(this.ctx.currentTime + delay);
   }
 
   engine(on, speed = 0, throttle = 0) {

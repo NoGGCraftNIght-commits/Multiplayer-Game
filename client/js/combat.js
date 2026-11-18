@@ -1,14 +1,21 @@
 import * as THREE from 'three';
+import { LITE } from './gfx.js';
 import { WEAPONS, rng, pushOut } from './shared.js';
 
-// Spielzeug-Blaster: Projektile fliegen sichtbar (Wasser, Schaumpfeile, Konfetti, Farbkleckse).
+// Schusswaffen: jede Kugel fliegt sichtbar als Leuchtspur, an der Mündung blitzt es, am Ziel gibt es Funken, Staub und Einschusslöcher.
 // Der Schütze erkennt Treffer lokal und meldet sie dem Server, der sie prüft und den Schaden setzt; fremde Schüsse sind nur Effekt.
 // Munition zählt der Server mit: der Zähler hier ist nur die Vorhersage fürs HUD.
 // Streuung kommt aus einem Seed, damit alle Clients dieselben Flugbahnen sehen.
-const MAXP = 240, MAXQ = 900, MAXD = 140;
-const Z = new THREE.Vector3(0, 0, 1), _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _s = new THREE.Vector3(), _v = new THREE.Vector3(), _c = new THREE.Color();
-const SHAPE = { water: [0.05, 0.3], dart: [0.035, 0.22], confetti: [0.05, 0.05], paint: [0.15, 0.15] };
-const SOUND = { water: 1.5, dart: 0.9, confetti: 0.6, paint: 0.45 };
+const MAXP = 240, MAXQ = 900, MAXD = 140, NFLASH = 8;
+const Z = new THREE.Vector3(0, 0, 1), _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _s = new THREE.Vector3(), _p = new THREE.Vector3(), _v = new THREE.Vector3();
+const TRACER = new THREE.Color(5, 3.4, 1.6), SPARK = new THREE.Color(4, 2.6, 0.9), DUST = new THREE.Color(0x8d8a82), BLOOD = new THREE.Color(0x6e0b0b), HOLE = new THREE.Color(0x141312), BRASS = new THREE.Color(0xc9a24a), SHELL = new THREE.Color(0x9c1f1f);
+const FLASH_TEX = (() => { // Mündungsfeuer: heller Kern mit Strahlen
+  const c = Object.assign(document.createElement('canvas'), { width: 64, height: 64 }), g = c.getContext('2d'), r = g.createRadialGradient(32, 32, 0, 32, 32, 30);
+  r.addColorStop(0, 'rgba(255,250,220,1)'); r.addColorStop(0.25, 'rgba(255,200,90,.9)'); r.addColorStop(1, 'rgba(255,120,20,0)');
+  g.fillStyle = r; g.beginPath();
+  for (let k = 0; k < 16; k++) { const a = k * Math.PI / 8, l = k % 2 ? 9 : 30; g.lineTo(32 + Math.cos(a) * l, 32 + Math.sin(a) * l); }
+  g.fill(); return new THREE.CanvasTexture(c);
+})();
 
 const EMPTY = [];
 export class Combat {
@@ -17,8 +24,15 @@ export class Combat {
     Object.assign(this, env);
     this.weapon = 0; this.ammo = WEAPONS.map(w => w.mag); this.cool = 0; this.reloadT = 0;
     this.shots = []; this.parts = []; this.decalN = 0;
-    this.projMesh = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 7, 5), new THREE.MeshStandardMaterial({ roughness: 0.35 }), MAXP);
-    this.projMesh.count = 0; this.projMesh.frustumCulled = false;
+    // Leuchtspuren als Linien und Mündungsfeuer als Punkte: beides lässt die Umgebungsverdeckung (GTAO) aus, Sprites würde sie schwarz malen
+    const add = { transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, vertexColors: true };
+    this.tracers = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial(add));
+    this.tracers.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(MAXP * 6), 3));
+    this.tracers.geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(MAXP * 6), 3));
+    this.flash = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({ ...add, size: 0.55, map: FLASH_TEX }));
+    this.flash.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(NFLASH * 3).fill(-999), 3));
+    this.flash.geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(NFLASH * 3).fill(2.2), 3));
+    this.tracers.frustumCulled = this.flash.frustumCulled = false; this.flashT = new Float32Array(NFLASH);
     this.decals = new THREE.InstancedMesh(new THREE.CircleGeometry(1, 14), new THREE.MeshStandardMaterial({ roughness: 0.5, polygonOffset: true, polygonOffsetFactor: -4 }), MAXD);
     this.decals.count = 0; this.decals.frustumCulled = false; this.decals.receiveShadow = true;
     const g = new THREE.BufferGeometry();
@@ -26,17 +40,19 @@ export class Combat {
     g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(MAXQ * 3), 3));
     this.points = new THREE.Points(g, new THREE.PointsMaterial({ size: 0.13, vertexColors: true, sizeAttenuation: true }));
     this.points.frustumCulled = false; this.partI = 0;
-    this.scene.add(this.projMesh, this.decals, this.points);
+    this.flashI = 0;
+    if (!LITE) { this.light = new THREE.PointLight(0xffb060, 0, 14, 2); this.scene.add(this.light); } // von Anfang an da: kein Shader-Neubau beim ersten Schuss
+    this.scene.add(this.tracers, this.flash, this.decals, this.points);
   }
 
   get w() { return WEAPONS[this.weapon]; }
   switchTo(i) { this.weapon = (i + WEAPONS.length) % WEAPONS.length; this.reloadT = 0; this.cool = Math.max(this.cool, 0.25); }
-  reload() { if (!this.reloadT && this.ammo[this.weapon] < this.w.mag) { this.reloadT = this.w.reload; this.onReload(this.weapon); this.audio.play('dash', { vol: 0.5 }); } }
+  reload() { if (!this.reloadT && this.ammo[this.weapon] < this.w.mag) { this.reloadT = this.w.reload; this.onReload(this.weapon); this.audio.play('reload', { vol: 0.7 }); } }
 
   // lokaler Schuss; liefert das Netzwerk-Paket oder null (Abklingzeit, leer, lädt nach)
   fire(origin, dir, color) {
     if (this.cool > 0 || this.reloadT > 0) return null;
-    if (this.ammo[this.weapon] <= 0) { this.reload(); return null; }
+    if (this.ammo[this.weapon] <= 0) { this.audio.play('click', { vol: 0.5 }); this.cool = 0.25; this.reload(); return null; }
     this.ammo[this.weapon]--; this.cool = 1 / this.w.rate;
     if (this.ammo[this.weapon] <= 0) this.reload();
     const shot = { w: this.weapon, o: origin.toArray(), d: dir.toArray(), seed: (Math.random() * 1e9) | 0 };
@@ -50,11 +66,17 @@ export class Combat {
     const side = new THREE.Vector3().crossVectors(d, Math.abs(d.y) > 0.9 ? Z : new THREE.Vector3(0, 1, 0)).normalize(), up = new THREE.Vector3().crossVectors(side, d);
     for (let i = 0; i < w.pellets; i++) {
       const v = d.clone().addScaledVector(side, (r() - 0.5) * 2 * w.spread).addScaledVector(up, (r() - 0.5) * 2 * w.spread).normalize().multiplyScalar(w.speed * (0.92 + r() * 0.16));
-      const col = w.fx === 'confetti' ? new THREE.Color().setHSL(r(), 0.95, 0.58) : w.fx === 'water' ? new THREE.Color(0x8fe3ff) : w.fx === 'dart' ? new THREE.Color(0xff8a1f) : new THREE.Color(color);
-      if (this.shots.length < MAXP) this.shots.push({ w, wi: shot.w, mine, col, p: new THREE.Vector3().fromArray(shot.o), v, left: w.range, hitIds: null });
-      if (!i) this.burst(_v.fromArray(shot.o), w.fx === 'water' ? _c.set(0xd8f4ff) : col, w.fx === 'confetti' ? 6 : 3, 1.1, 0.22); // Mündungsnebel statt Feuer
+      if (this.shots.length < MAXP) this.shots.push({ w, wi: shot.w, mine, p: new THREE.Vector3().fromArray(shot.o), v, left: w.range, age: 0 });
     }
-    this.audio.play('shoot', { pos: mine ? null : { x: shot.o[0], z: shot.o[2] }, vol: mine ? 0.5 : 0.8, rate: SOUND[w.fx] });
+    // Mündungsfeuer + kurzer Lichtblitz, Hülse fliegt nach rechts oben
+    const o = _v.fromArray(shot.o), k = this.flashI = (this.flashI + 1) % NFLASH, big = w.fx === 'shotgun' || w.fx === 'rifle';
+    _p.copy(o).addScaledVector(d, 0.08); this.flash.geometry.attributes.position.setXYZ(k, _p.x, _p.y, _p.z); this.flash.geometry.attributes.position.needsUpdate = true; this.flashT[k] = 0.05;
+    if (this.light) { this.light.position.copy(_p); this.light.intensity = big ? 9 : 6; }
+    if (w.fx !== 'shotgun') this.burst(o.addScaledVector(side, 0.06), BRASS, 1, 2.2, 0.9);
+    const pos = mine ? null : { x: shot.o[0], z: shot.o[2] };
+    this.audio.play('gun' + shot.w, { pos, vol: mine ? 0.75 : 1, fall: 0.0008, muffle: true });
+    if (w.fx === 'shotgun') { this.audio.play('pump', { pos, vol: 0.55, delay: 0.32 }); setTimeout(() => this.burst(_v.fromArray(shot.o).addScaledVector(side, 0.06), SHELL, 1, 2, 1), 380); }
+    else this.audio.play('casing', { pos, vol: 0.18, delay: 0.35 + Math.random() * 0.15 });
   }
 
   // Welt-Kollision eines Punktes: Normale oder null
@@ -111,20 +133,21 @@ export class Combat {
   }
 
   impact(s, n, target) {
-    const fx = s.w.fx;
-    this.burst(s.p, s.col, fx === 'paint' ? 26 : fx === 'confetti' ? 5 : 7, fx === 'paint' ? 4 : 2.6, fx === 'confetti' ? 1.6 : 0.6);
-    if (!target && fx === 'paint') this.splat(s.p, n, s.col, 0.75);
-    if (!target && fx === 'water') this.splat(s.p, n, _c.set(0x5f7f95), 0.16);
-    this.audio.play(target ? 'hit' : 'impact', { pos: s.p, vol: fx === 'paint' ? 0.9 : 0.35, rate: fx === 'paint' ? 0.7 : 1.3 });
+    if (target) { this.burst(s.p, BLOOD, 7, 2, 0.45); this.audio.play('flesh', { pos: s.p, vol: 0.7 }); return; }
+    this.burst(s.p, SPARK, 4, 5, 0.18); this.burst(s.p, DUST, 5, 1.2, 0.6);
+    this.splat(s.p, n, HOLE, 0.045);
+    this.audio.play(Math.random() < 0.12 ? 'ricochet' : 'bimpact', { pos: s.p, vol: 0.45 });
   }
 
   update(dt) {
     this.cool = Math.max(0, this.cool - dt);
+    for (let k = 0; k < NFLASH; k++) if (this.flashT[k] > 0 && (this.flashT[k] -= dt) <= 0) { this.flash.geometry.attributes.position.setXYZ(k, 0, -999, 0); this.flash.geometry.attributes.position.needsUpdate = true; }
+    if (this.light) this.light.intensity *= Math.exp(-dt * 40);
     if (this.reloadT > 0 && (this.reloadT -= dt) <= 0) { this.reloadT = 0; this.ammo[this.weapon] = this.w.mag; this.audio.play('confirm', { vol: 0.4 }); }
     const targets = this.shots.length ? this.targets() : [], n = new THREE.Vector3();
     for (let i = this.shots.length - 1; i >= 0; i--) {
       const s = this.shots[i];
-      s.v.y -= (s.w.gravity ?? 1.5) * dt;
+      s.v.y -= 1.5 * dt; s.age += dt;
       const dist = s.v.length() * dt, steps = Math.max(1, Math.ceil(dist / 0.35));
       let dead = (s.left -= dist) <= 0;
       for (let k = 0; k < steps && !dead; k++) {
@@ -137,14 +160,15 @@ export class Combat {
       }
       if (dead) this.shots.splice(i, 1);
     }
-    // Projektile zeichnen (gestreckt in Flugrichtung)
-    this.projMesh.count = this.shots.length;
+    // Leuchtspur: Linie hinter der Kugel, vorn hell, hinten dunkel; beim Start kürzer (sonst ragt sie hinten aus der Waffe)
+    const tp = this.tracers.geometry.attributes.position, tc = this.tracers.geometry.attributes.color;
     this.shots.forEach((s, i) => {
-      const [r, l] = SHAPE[s.w.fx];
-      this.projMesh.setMatrixAt(i, _m.compose(s.p, _q.setFromUnitVectors(Z, _v.copy(s.v).normalize()), _s.set(r, r, l)));
-      this.projMesh.setColorAt(i, s.col);
+      const l = Math.min(2.5, s.age * s.w.speed * 0.6 + 0.3);
+      _v.copy(s.v).normalize(); _p.copy(s.p).addScaledVector(_v, -l);
+      tp.setXYZ(2 * i, _p.x, _p.y, _p.z); tp.setXYZ(2 * i + 1, s.p.x, s.p.y, s.p.z);
+      tc.setXYZ(2 * i, 0.3, 0.15, 0.05); tc.setXYZ(2 * i + 1, TRACER.r, TRACER.g, TRACER.b);
     });
-    this.projMesh.instanceMatrix.needsUpdate = true; if (this.projMesh.instanceColor) this.projMesh.instanceColor.needsUpdate = true;
+    this.tracers.geometry.setDrawRange(0, this.shots.length * 2); tp.needsUpdate = tc.needsUpdate = true;
     // Partikel
     const pos = this.points.geometry.attributes.position;
     for (let k = 0; k < this.parts.length; k++) {

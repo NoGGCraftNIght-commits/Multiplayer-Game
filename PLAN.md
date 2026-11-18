@@ -1,3 +1,34 @@
+# Grand Tor Auto – Plan: Spielgefühl wie die 80er-Stadt-Klassiker
+
+Vorbild sind die **Mechaniken** von GTA Vice City (Fahndung, Polizei-Jagd, Lackiererei, Pickups, Radio).
+Name, Karte, Autos, Musik, Logo und HUD-Look des Vorbilds werden **nicht** übernommen: alles ist eigen.
+
+## Unterschiede zum Vorbild → Änderung
+| Vorbild | Bisher hier | Änderung |
+|---|---|---|
+| Echte Waffen mit Mündungsfeuer, Leuchtspur, Einschusslöchern, lautem Knall | Spielzeug-Effekte (Wasser, Konfetti, Farbe), ein Ton für alle | Phase A |
+| Eckige 80er-Autos in vielen Lackfarben, Chrom, Lichter | Kenney-Spielzeugautos, alle gleich bunt | Phase B: eigene Modelle aus Code |
+| Polizei kommt im Streifenwagen mit Sirene, Wachen springen raus, rammen | nur Wachen zu Fuß + Hubschrauber | Phase C |
+| 6 Sterne | 5 Sterne | Phase C |
+| Festnahme durch Anfassen/Rausziehen, danach Polizeiwache, Waffen weg | nur K.o. durch Wache | Phase C |
+| Lackiererei: Fahndung weg, Auto heil, neue Farbe, kostet Geld | fehlt | Phase C |
+| Bestechungs-Stern, Herz, Schutzweste als Pickup | nur Waffen-Pickups | Phase D |
+| Panzerung 0–100 | fehlt | Phase D |
+| Tod: Krankenhaus, Waffen weg, Gebühr | Respawn irgendwo, alles bleibt | Phase D |
+| Radio im Auto, mehrere Sender | Motorgeräusch | Phase E: eigene Sender, Musik aus Code |
+
+## Phasen (je Phase: Test, Commit, Push)
+- ☑ **A Waffen**: echte Formen ohne orange Spitze, Mündungsfeuer + Licht, Leuchtspur, Funken/Staub, Einschusslöcher, Treffer-Wolke; Schuss-, Leer- und Nachladeton je Waffe, mit Entfernung dumpfer
+- ☐ **B Autos**: eigene 80er-Modelle (Limousine, Keil-Sportwagen, Kombi, Geländewagen, Bus, Laster, Rennwagen), Lack je Auto, Chrom, Glas, Felgen; Taxi-Schild, Blaulicht-Balken; Blech-Verformung und Türen bleiben
+- ☐ **C Polizei**: Streifenwagen fahren über Straßen zum Gesuchten, Sirene + Blaulicht, Wachen steigen aus; 6 Sterne; Festnahme bei Kontakt; 3 Lackierereien (Durchfahrt)
+- ☐ **D Pickups & Leben**: Herz, Weste, Bestechungs-Stern; Panzerung; Krankenhaus/Wache als Neustart mit Verlust; HUD mit Weste und 6 Sternen
+- ☐ **E Radio**: 2 eigene Sender (Synthpop, Electro) + Aus, Taste `R` im Auto, Sendername oben
+
+## Bewusst weggelassen (zu groß für jetzt)
+Motorräder, Boote, Flugzeuge, Gangs, Story-Missionen, Amokläufe, Nahkampf, Wetter, Immobilien, Ertrinken, Taxi-/Rettungs-Nebenjobs, versteckte Päckchen.
+
+---
+
 # Spritzstadt – Plan
 
 Reihenfolge = Abarbeitung. Nach jeder Phase: Test, Commit, Push auf `claude/confident-cori-jj4oph`.

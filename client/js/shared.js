@@ -21,14 +21,13 @@ export const AVATARS = ['avatar_m01', 'avatar_f03', 'avatar_m04', 'avatar_f01', 
   'avatar_fb1', 'avatar_mb1', 'avatar_fs1', 'avatar_ms1']; // b = Büro, s = Strand
 export const COPS = ['cop_m1', 'cop_f1', 'cop_m2']; // Stadtwache
 
-// Spielzeug-Blaster: Schaden = "Spritzpunkte" auf 100 Energie
-// Waffen wie im großen Vorbild: Gattungsnamen ohne Marken. Sie verschießen weiter Wasser, Schaum, Konfetti und Farbe.
+// Waffen wie im großen Vorbild: Gattungsnamen ohne Marken. Schaden auf 100 Energie; speed nur für die Leuchtspur (m/s).
 // Am Anfang hat jeder nur die Pistole; den Rest findet man in der Stadt (PICKUP) oder kauft ihn im Waffenladen (price, $)
 export const WEAPONS = [
-  { id: 'splash', name: 'Pistole', damage: 14, rate: 4, range: 45, spread: 0.01, pellets: 1, speed: 60, fx: 'water', mag: 15, reload: 1.3, price: 0 },
-  { id: 'dart', name: 'Maschinenpistole', damage: 8, rate: 11, range: 40, spread: 0.022, pellets: 1, speed: 80, fx: 'dart', mag: 30, reload: 1.8, price: 250 },
-  { id: 'confetti', name: 'Pump-Schrotflinte', damage: 9, rate: 1.1, range: 24, spread: 0.07, pellets: 8, speed: 60, fx: 'confetti', mag: 6, reload: 2.4, price: 400 },
-  { id: 'paint', name: 'Sturmgewehr', damage: 13, rate: 7, range: 75, spread: 0.008, pellets: 1, speed: 85, fx: 'paint', mag: 30, reload: 2.2, gravity: 2, price: 650 },
+  { id: 'splash', name: 'Pistole', damage: 14, rate: 4, range: 45, spread: 0.01, pellets: 1, speed: 260, fx: 'pistol', mag: 15, reload: 1.3, price: 0 },
+  { id: 'dart', name: 'Maschinenpistole', damage: 8, rate: 11, range: 40, spread: 0.022, pellets: 1, speed: 300, fx: 'smg', mag: 30, reload: 1.8, price: 250 },
+  { id: 'confetti', name: 'Pump-Schrotflinte', damage: 9, rate: 1.1, range: 24, spread: 0.07, pellets: 8, speed: 240, fx: 'shotgun', mag: 6, reload: 2.4, price: 400 },
+  { id: 'paint', name: 'Sturmgewehr', damage: 13, rate: 7, range: 75, spread: 0.008, pellets: 1, speed: 340, fx: 'rifle', mag: 30, reload: 2.2, price: 650 },
 ];
 export const START_MONEY = 300, KO_MONEY = 150, JUMP_MONEY = 100, PICKUP_RESPAWN = 45000;
 export const CAR_HIT_DAMAGE = 35;

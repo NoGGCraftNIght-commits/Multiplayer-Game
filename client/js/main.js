@@ -13,13 +13,12 @@ import { makeHeli } from './heli.js';
 import { Net, Interp, RENDER_DELAY } from './net.js';
 import { MAX_PLAYERS, A, AIM_FLAG, AVATARS, COPS, WEAPONS, DAY_LENGTH, TICK_HZ, PED_HZ, HALF, BEACH, RIVER, buildCity, pushOut, clamp, sanitizeName, sanitizeRoom } from './shared.js';
 
-// Spritzstadt – Spielschleife: Menü, Beitritt, eigene Figur, Kamera, Fahren, Netz, HUD.
+// Grand Tor Auto – Spielschleife: Menü, Beitritt, eigene Figur, Kamera, Fahren, Netz, HUD.
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const COLORS = [['#ff5aa0', 'Pink'], ['#35c2ff', 'Blau'], ['#ffd23f', 'Gelb'], ['#7dffb0', 'Mint'], ['#b44dff', 'Lila'], ['#ff8a1f', 'Orange'], ['#ff4d4d', 'Rot'], ['#21e6c8', 'Türkis'], ['#ffffff', 'Weiß'], ['#9aa7ff', 'Flieder']];
 const HELLO = ['Hi!', 'Schönes Wetter, oder?', 'Na, alles klar?', 'Tolle Farbe!', 'Moin!', 'Pass auf die Autos auf!', 'Ab an den Strand!', 'Hallo du!'];
-const OUCH = ['Hey!', 'Ich bin ganz nass!', 'Na warte!', 'Uff!', 'Meine Frisur!', 'Huch!'];
-const VERB = ['nass gespritzt', 'mit Schaumpfeilen erwischt', 'in Konfetti begraben', 'bunt angemalt'];
+const OUCH = ['Hey!', 'Nicht schießen!', 'Hilfe!', 'Aua!', 'Bist du verrückt?', 'Polizei!'];
 const WALK_V = 1.5, RUN_V = 3.6, SPRINT_V = 6.4, RADIUS = 0.38;
 
 const store = {
@@ -233,7 +232,7 @@ function bindNet() {
   });
   net.on('peds', (s) => { pedBuf.push(s.t, s.a); copBuf.push(s.t, s.c || NOCOPS); heliBuf.push(s.t, s.h || NOHELI); });
   net.on('wanted', ({ stars, hide }) => {
-    if (stars > me.stars) { hud.feed(me.stars ? 'Die Fahndung wird verschärft!' : 'Die Stadtwache sucht dich!'); audio.play('ui', { vol: 0.9, rate: 0.6 }); }
+    if (stars > me.stars) { hud.feed(me.stars ? 'Die Fahndung wird verschärft!' : 'Die Polizei sucht dich!'); audio.play('ui', { vol: 0.9, rate: 0.6 }); }
     else if (!stars && me.stars) hud.feed('Fahndung eingestellt');
     me.stars = stars;
     txt($('starsOn'), '★'.repeat(stars)); txt($('starsOff'), '★'.repeat(5 - stars));
@@ -275,11 +274,11 @@ function bindNet() {
     const a = who(by), b = who(id);
     if (a) a.score = score; if (b) { b.kos = kos; b.hp = 0; }
     const bn = b?.name ?? 'Jemand';
-    hud.feed(w === -2 ? `${bn} ist mit einem Auto in die Luft geflogen` : w === -3 ? `${bn} wurde von der Stadtwache erwischt` : `${a?.name ?? 'Jemand'} hat ${bn} ${VERB[w] ?? 'umgeschubst'}`);
+    hud.feed(w === -2 ? `${bn} ist mit einem Auto in die Luft geflogen` : w === -3 ? `${bn} wurde von der Polizei verhaftet` : `${a?.name ?? 'Jemand'} hat ${bn} ${WEAPONS[w] ? `ausgeschaltet (${WEAPONS[w].name})` : 'umgefahren'}`);
     if (b === me) {
       me.alive = false; koUntil = performance.now() + 4000; ui.ko.classList.remove('hidden'); document.body.classList.add('ko'); audio.play('kill');
-      koBy = w === -2 ? 'durch eine Explosion' : w === -3 ? 'von der Stadtwache' : `von ${a?.name ?? 'jemandem'}`;
-      txt(ui.ko.firstChild, w === -3 ? 'Erwischt!' : w === -2 ? 'Bumm!' : 'Durchgeweicht!');
+      koBy = w === -2 ? 'durch eine Explosion' : w === -3 ? 'von der Polizei' : `von ${a?.name ?? 'jemandem'}`;
+      txt(ui.ko.firstChild, w === -3 ? 'Verhaftet!' : 'Erledigt!');
     }
     else if (a === me) audio.play('coin', { vol: 0.8 });
   });
