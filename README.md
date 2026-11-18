@@ -1,8 +1,9 @@
 # Grand Tor Auto
 
 3D-Mehrspieler-Spiel für den Browser: eine offene Strandstadt, 42 Figuren, Autos mit Fahrphysik und Schaden,
-Spielzeug-Blaster (Wasser, Schaumpfeile, Konfetti, Farbe), Passanten, Verkehr, Fahndungssterne mit Stadtwache und
-Hubschrauber. Bis zu 16 Spieler pro Raum. Läuft auf PC, Chromebook (Maus, Trackpad oder Touch), Tablet und Handy.
+vier Schusswaffen mit Mündungsfeuer und Leuchtspur, Passanten, Verkehr, Fahndung bis 6 Sterne mit Streifenwagen,
+Wachen und Hubschrauber, Lackierereien, Autoradio mit eigenen Sendern. Die Mechaniken orientieren sich an den
+Stadt-Actionspielen der 2000er; Autos, Musik, Karte und Klänge sind eigene Arbeit aus Code. Bis zu 16 Spieler pro Raum. Läuft auf PC, Chromebook (Maus, Trackpad oder Touch), Tablet und Handy.
 
 Alles ist eigene Arbeit oder frei lizenziert; es werden keine geschützten Namen, Marken oder Inhalte verwendet.
 
@@ -71,35 +72,41 @@ danach das zuletzt benutzte Gerät (Finger auf dem Bildschirm → Touch-Tasten, 
 | Umschauen | Maus oder Trackpad, auch Pfeiltasten | rechts wischen |
 | Sprinten | Umschalt | Stick ganz durchdrücken |
 | Springen / Handbremse | Leertaste | ⤒ |
-| Spritzen | Linksklick, V oder Enter | 💦 (gedrückt halten, dabei wischen) |
+| Schießen | Linksklick, V oder Enter | ✛ (gedrückt halten, dabei wischen) |
 | Zielen | Rechtsklick halten oder C (an/aus) | ◎ |
 | Waffe wechseln (nur eigene) | 1–4, Q, Mausrad | ⟳ antippen |
 | Waffenrad | Tab halten, mit Maus zeigen, loslassen | ⟳ lange drücken, Finger ziehen |
-| Nachladen | R | automatisch |
+| Nachladen · im Auto: Radiosender | R | automatisch |
 | Ein-/Aussteigen | F | 🚗 |
-| Hupe · Auto aufrichten | H · T | 📯 |
+| Hupe (im Streifenwagen: Sirene) · Auto aufrichten | H · T | 📯 |
 | Passanten grüßen · Daumen runter | E · N | 👋 |
 | Waffenladen: Menü öffnen, kaufen | am Tresen E, dann 1–3 | 👋, dann antippen |
 | Punkteliste | L halten | ≡ |
 | Pause | Esc oder P | II |
 
-Trackpad-Tipp: Mit Pfeiltasten umschauen und mit V spritzen, dann muss man nicht gleichzeitig wischen und klicken.
+Trackpad-Tipp: Mit Pfeiltasten umschauen und mit V schießen, dann muss man nicht gleichzeitig wischen und klicken.
 
 ## 4. Spielregeln in Kürze
 
-- **Energie:** 100. Treffer kosten Energie, bei 0 bist du „durchgeweicht“ und kommst nach 4 Sekunden zurück.
+- **Energie und Weste:** 100 Energie. Eine Schutzweste (blauer Ring) fängt bis zu 100 Schaden zuerst ab, ein Herz
+  (roter Ring, in Parks und am Krankenhaus) füllt die Energie auf. Bei 0 bist du erledigt: Neustart nach 4 Sekunden
+  vor dem Krankenhaus, dabei sind Weste und alle Waffen außer der Pistole weg und es kostet 100 $.
 - **Autos:** Jeder Aufprall kostet das Auto Energie, je schneller, desto mehr. Blech verformt sich, Türen fallen ab,
   ab halber Energie raucht der Motor. Bei 0 brennt es vorn und fliegt nach 4,5 Sekunden in die Luft – wer noch drin sitzt
   oder daneben steht, ist raus. Wracks werden nach 25 Sekunden ersetzt.
-- **Fahndung (0–5 Sterne):** Passanten nass spritzen, Leute anfahren, fahrende Autos kapern, Autos sprengen und die
-  Stadtwache treffen bringt Sterne. Die Stadtwache rückt an und spritzt zurück. Ab 3 Sternen kommt ein Hubschrauber,
-  aus dem sich weitere Wachen abseilen. Blinken die Sterne, sieht dich gerade niemand: Bleib einige Sekunden
-  außer Sicht, dann ist die Fahndung vorbei.
+- **Fahndung (0–6 Sterne):** Auf Passanten schießen, Leute anfahren, fahrende Autos kapern, Streifenwagen klauen,
+  Autos sprengen und Polizisten treffen bringt Sterne. Streifenwagen kommen mit Sirene und Blaulicht über die Straßen,
+  halten neben dir und lassen Polizisten aussteigen; sitzt du im Auto, rammen sie. Bei 1–2 Sternen wollen die
+  Polizisten dich festnehmen (anfassen bzw. aus dem stehenden Auto ziehen), ab 3 Sternen schießen sie und ein
+  Hubschrauber kommt, aus dem sich weitere abseilen. Festnahme: Neustart vor der Polizeiwache, Waffen weg, 100 $ Strafe.
+  Blinken die Sterne, sieht dich gerade niemand: Bleib einige Sekunden außer Sicht, dann ist die Fahndung vorbei.
+- **Abtauchen:** Ein weißer Stern (Gehweg-Ecken) senkt die Fahndung um einen Stern. Durch eines der drei
+  „LACK & SPRAY“-Portale fahren (rosa Punkte auf der Karte) kostet 100 $: Fahndung weg, Auto repariert, neue Farbe.
+- **Radio:** Im Auto läuft ein Sender; R wechselt zwischen „Neon 88 FM“, „Kassette 101“ und aus.
 
 - **Waffen:** Am Anfang hast du nur die Pistole. Maschinenpistole, Pump-Schrotflinte und Sturmgewehr liegen an
   Fundorten in der Stadt (gelbe Punkte auf der Karte: Gassen, Parks, Strand, unter Brücken im Flussbett; nach
-  45 Sekunden liegt dort wieder eine) oder du kaufst sie in einem der drei Waffenläden (orange Punkte). Waffen bleiben
-  nach einem K.o. erhalten. Alle Waffen verschießen weiter Wasser, Schaum, Konfetti oder Farbe.
+  45 Sekunden liegt dort wieder eine) oder du kaufst sie in einem der drei Waffenläden (orange Punkte).
 - **Geld:** Start 300 $. Jeder K.o. eines Mitspielers bringt 150 $, ein Sprung über den Fluss an einer gelb-schwarzen
   Rampe 100 $ (höchstens alle 15 Sekunden).
 - **Läden:** Viele Häuser haben unten einen offenen Laden: Supermarkt, Imbiss, Bar, Modeladen, Waffenladen,
@@ -152,10 +159,13 @@ Autoschaden, Explosion, Fahndung, Verkehr.
 
 - Der Server prüft Bewegungen auf Plausibilität, rechnet aber keine eigene Fahrphysik. Aufprallschaden liest er aus
   dem gemeldeten Fahrverlauf.
-- Die Stadtwache kommt zu Fuß und per Hubschrauber, nicht im Streifenwagen. Der Hubschrauber ist nicht angreifbar.
-- Blaster beschädigen keine Autos.
+- Streifenwagen fahren auf dem Server ohne Physik (wie der Verkehr) und können durch andere Autos gleiten.
+  Der Hubschrauber ist nicht angreifbar. Schüsse beschädigen keine Autos.
+- Die Pfeiler der Lackiererei-Portale haben keine Kollision. Krankenhaus und Polizeiwache sind Schilder am Gehweg,
+  keine eigenen Gebäude.
+- Touch-Geräte können den Radiosender nicht wechseln (jedes Auto hat seinen Sender).
 - Ein Raum lebt nur im Arbeitsspeicher des Servers; nach einem Neustart sind Räume und Punkte weg.
-- Gebäude sind Kulisse (nicht betretbar). Es gibt keine Missionen.
+- Es gibt keine Missionen, Motorräder, Boote oder Gangs.
 - Die Leistung wurde nur mit Software-Grafik gemessen, nicht auf echten Chromebooks.
 
 ## 9. Quellen und Lizenzen

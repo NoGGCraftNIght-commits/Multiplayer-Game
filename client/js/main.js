@@ -6,7 +6,7 @@ import { QUALITY, DEFAULT_Q, START_Q, LITE, CHROMEBOOK } from './gfx.js';
 import { Vehicles } from './vehicles.js';
 import { Character, gunIcon, makeBlaster } from './character.js';
 import { Combat } from './combat.js';
-import { Audio } from './audio.js';
+import { Audio, STATIONS } from './audio.js';
 import { Input } from './input.js';
 import { Hud } from './hud.js';
 import { makeHeli } from './heli.js';
@@ -344,8 +344,9 @@ function flash(color) { // kurzer farbiger Bildrand, wenn ich getroffen werde
 function controls() {
   if (input.pressed('enter')) me.veh ? leaveCar(true) : enterCar();
   if (me.veh) {
-    if (input.pressed('horn')) { audio.horn(null); net.emit('horn'); }
+    if (input.pressed('horn')) { if (me.veh.type !== 'police_car') audio.horn(null); net.emit('horn'); } // im Streifenwagen: Sirene
     if (input.pressed('flip')) vehicles.resetUpright();
+    if (input.pressed('reload')) setStation((audio.station + 1) % STATIONS.length); // R im Auto: Sender wechseln
     return;
   }
   if (shopOpen) { // Laden offen: 1–3 kaufen, E/Esc schließen; sonst nichts
@@ -498,14 +499,16 @@ function enterCar() {
     me.veh = v; v.driver = me.id; vehicles.startDriving(v);
     me.char.root.visible = false; me.char.aimAt(null); me.aim = false; cam.free = 0;
     audio.play('confirm', { vol: 0.5 }); blip(ui.vname, v.cfg.name, 3000);
+    setTimeout(() => me.veh === v && setStation(1 + v.id % (STATIONS.length - 1)), 1200); // jedes Auto hat seinen Lieblingssender
   });
 }
+function setStation(i) { audio.radio(i); if (me.veh) blip(ui.vname, `📻 ${STATIONS[i].name}`, 2500); }
 
 function leaveCar(tell) {
   const v = me.veh; if (!v) return;
   if (tell) { sendCar(true); net.emit('exit'); } // letzter Stand sicher zustellen, sonst springt das Auto zurück
   const yaw = carYaw(v), ex = Math.cos(yaw), ez = -Math.sin(yaw), d = v.half.x + 0.75; // (ex, ez) = links vom Auto
-  vehicles.stopDriving(); audio.engine(false); me.veh = null; v.driver = 0;
+  vehicles.stopDriving(); audio.engine(false); audio.radio(0); me.veh = null; v.driver = 0;
   const free = (s) => !pushOut(city.solids, v.pos.x + ex * d * s, v.pos.z + ez * d * s, 0.4) && !vehicles.pushOut(v.pos.x + ex * d * s, v.pos.z + ez * d * s, 0.4);
   const side = free(1) || !free(-1) ? 1 : -1; // Fahrertür, sonst Beifahrerseite
   me.pos.set(v.pos.x + ex * d * side, 0, v.pos.z + ez * d * side); me.pos.y = world.groundY(me.pos.x, me.pos.z, v.pos.y + 0.5);

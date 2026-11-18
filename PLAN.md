@@ -22,7 +22,7 @@ Name, Karte, Autos, Musik, Logo und HUD-Look des Vorbilds werden **nicht** über
 - ☑ **B Autos**: eigene 80er-Modelle (Limousine, Keil-Sportwagen, Kombi, Geländewagen, Bus, Laster, Rennwagen), Lack je Auto, Chrom, Glas, Felgen; Taxi-Schild, Blaulicht-Balken; Blech-Verformung und Türen bleiben
 - ☑ **C Polizei**: Streifenwagen fahren über Straßen zum Gesuchten, Sirene + Blaulicht, Wachen steigen aus; 6 Sterne; Festnahme bei Kontakt; 3 Lackierereien (Durchfahrt)
 - ☑ **D Pickups & Leben**: Herz, Weste, Bestechungs-Stern; Panzerung; Krankenhaus/Wache als Neustart mit Verlust; HUD mit Weste und 6 Sternen
-- ☐ **E Radio**: 2 eigene Sender (Synthpop, Electro) + Aus, Taste `R` im Auto, Sendername oben
+- ☑ **E Radio**: 2 eigene Sender (Synthpop, Electro) + Aus, Taste `R` im Auto, Sendername oben
 
 ## Bewusst weggelassen (zu groß für jetzt)
 Motorräder, Boote, Flugzeuge, Gangs, Story-Missionen, Amokläufe, Nahkampf, Wetter, Immobilien, Ertrinken, Taxi-/Rettungs-Nebenjobs, versteckte Päckchen.

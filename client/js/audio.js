@@ -18,6 +18,14 @@ function clack(d, sr, at, amp, freqs, decay) {
     d[i0 + i] += amp * v * e;
   }
 }
+// Autoradio: eigene Sender, Musik live aus Oszillatoren (keine Aufnahmen). Akkorde als MIDI-Noten, je Takt einer.
+export const STATIONS = [
+  { name: 'Radio aus' },
+  { name: 'Neon 88 FM', bpm: 112, prog: [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]], arp: [0, 2, 1, 2, 0, 2, 1, 2], four: false, bass: 'sawtooth', lead: 'square' },
+  { name: 'Kassette 101', bpm: 124, prog: [[50, 53, 57], [46, 50, 53], [48, 51, 55], [45, 48, 52]], arp: [0, 1, 2, 1, 2, 0, 2, 1], four: true, bass: 'square', lead: 'triangle' },
+];
+const mtof = (m) => 440 * 2 ** ((m - 69) / 12);
+
 function makeSfx(ctx) {
   const out = {};
   GUN_SFX.forEach(([crack, hz, boom, tail, vol, echo], k) => out['gun' + k] = buffer(ctx, tail + 0.25, (d, sr) => {
@@ -105,6 +113,42 @@ export class Audio {
       this.rot = g;
     }
     this.rot.gain.setTargetAtTime(dist < 0 ? 0 : 0.5 / (1 + dist * dist * 0.0004), this.ctx.currentTime, 0.2);
+  }
+
+  // Sender i einschalten (0 = aus); geplant wird in 25-ms-Schritten 0,12 s voraus
+  radio(i) {
+    if (!this.ctx) return;
+    this.station = i;
+    if (!this.rbus) {
+      const f = this.ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 3800; // klingt nach Autolautsprecher
+      this.rbus = this.ctx.createGain(); this.rbus.gain.value = 0; this.rbus.connect(f).connect(this.master);
+      const n = this.ctx.createBuffer(1, this.ctx.sampleRate, this.ctx.sampleRate), d = n.getChannelData(0); for (let k = 0; k < d.length; k++) d[k] = Math.random() * 2 - 1;
+      this.noise = n;
+    }
+    this.rbus.gain.setTargetAtTime(i ? 0.2 : 0, this.ctx.currentTime, 0.1);
+    clearInterval(this.rtimer); this.rtimer = null;
+    if (!i) return;
+    this.rnext = this.ctx.currentTime + 0.05; this.rstep = 0;
+    this.rtimer = setInterval(() => { const S = STATIONS[this.station], sp = 15 / S.bpm; while (this.rnext < this.ctx.currentTime + 0.12) { this.beat(S, this.rstep++, this.rnext, sp); this.rnext += sp; } }, 25);
+  }
+
+  // eine Sechzehntel: Bassdrum, Snare, Hi-Hat, Bass, Arpeggio, Flächenakkord
+  beat(S, k, t, sp) {
+    const ch = S.prog[Math.floor(k / 16) % S.prog.length], s = k % 16;
+    const tone = (type, hz, at, len, vol, cut = 0) => {
+      const o = this.ctx.createOscillator(), g = this.ctx.createGain(); o.type = type; o.frequency.value = hz;
+      g.gain.setValueAtTime(vol, at); g.gain.exponentialRampToValueAtTime(0.001, at + len);
+      if (cut) { const f = this.ctx.createBiquadFilter(); f.frequency.value = cut; o.connect(f).connect(g); } else o.connect(g);
+      g.connect(this.rbus); o.start(at); o.stop(at + len + 0.02);
+      return o;
+    };
+    const hiss = (at, len, vol, hp) => { const n = this.ctx.createBufferSource(), f = this.ctx.createBiquadFilter(), g = this.ctx.createGain(); n.buffer = this.noise; f.type = 'highpass'; f.frequency.value = hp; g.gain.setValueAtTime(vol, at); g.gain.exponentialRampToValueAtTime(0.001, at + len); n.connect(f).connect(g).connect(this.rbus); n.start(at, Math.random() * 0.5); n.stop(at + len + 0.02); };
+    if (S.four ? s % 4 === 0 : s === 0 || s === 8 || s === 10) { const o = tone('sine', 150, t, 0.28, 0.9); o.frequency.exponentialRampToValueAtTime(42, t + 0.12); }
+    if (s === 4 || s === 12) { hiss(t, 0.32, 0.5, 900); tone('triangle', 190, t, 0.1, 0.3); } // Snare mit langem Hall der Zeit
+    if (s % 2 === 0) hiss(t, 0.04, 0.12, 7000);
+    if (s % 2 === 0) tone(S.bass, mtof(ch[0] - 24 + (s % 8 === 6 ? 12 : 0)), t, sp * 1.7, 0.22, 900);
+    tone(S.lead, mtof(ch[S.arp[s % 8]] + 12), t, sp * 0.9, 0.05, 2600);
+    if (s === 0) for (const m of ch) for (const det of [-6, 6]) { const o = tone('sawtooth', mtof(m), t, sp * 15, 0.035, 1400); o.detune.value = det; }
   }
 
   // Polizeisirene: auf- und abschwellender Heulton der nächsten Sirene (dist < 0 = aus)
