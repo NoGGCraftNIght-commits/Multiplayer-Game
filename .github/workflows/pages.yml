@@ -9,7 +9,7 @@ permissions:
   pages: write
   id-token: write
 concurrency:
-  group: pages
+  group: pages-${{ github.ref_name }} # sonst bricht ein Push auf einen Nebenbranch die Veröffentlichung ab
   cancel-in-progress: true
 jobs:
   deploy:
