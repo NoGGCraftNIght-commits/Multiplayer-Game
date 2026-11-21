@@ -166,15 +166,45 @@ const sendState = () => mode === 'host' && conn?.open && conn.send(['state', S])
 // ---------- Bildschirme ----------
 function show(id) { ['menu', 'wait', 'game'].forEach(s => $(s).classList.toggle('hidden', s !== id)); }
 function startGame() { show('game'); prev = null; sel = null; render(); }
+function drop() { // alle Verbindungen der alten Sitzung schließen
+  gen++; clearInterval(ticker); const c = conn; conn = null; c?.close(); peer?.destroy(); peer = null;
+  clients.forEach(cl => cl.end(true)); clients = [];
+}
 function leave(msg) {
-  gen++; clearInterval(ticker); conn?.close(); peer?.destroy(); peer = conn = S = null; mode = null; retries = 0;
+  drop(); S = null; mode = null; retries = 0;
   $('over').classList.add('hidden'); history.replaceState(null, '', location.pathname);
   show('menu'); $('err').textContent = msg || '';
 }
 
 // ---------- Netzwerk ----------
+// Zwei Wege, beide laufen beim Gastgeber gleichzeitig:
+// 1. WebRTC direkt (PeerJS), 2. Relay über öffentliche MQTT-Broker per WebSocket – für Browser ohne WebRTC.
+// shortcut: öffentliche Gratis-Broker, können ausfallen oder mitlesen (nur Spielzüge); dann eigenen Broker eintragen
+const MQTT = new URLSearchParams(location.search).get('mqtt'); // ?mqtt=ws://host:port = eigener Broker (lokale Tests)
+const BROKERS = MQTT ? [MQTT] : ['wss://broker.emqx.io:8084/mqtt', 'wss://broker.hivemq.com:8884/mqtt'];
+const loadMqtt = () => import('https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.esm.js').then(m => m.default);
+const hasRTC = typeof RTCPeerConnection !== 'undefined';
+const TOPIC = (code) => 'muehle-v1/' + code;
+let clients = [];
 const ALPHA = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const newCode = () => Array.from(crypto.getRandomValues(new Uint8Array(5)), (v) => ALPHA[v % ALPHA.length]).join('');
+const roomUrl = (code) => '?room=' + code + (PEER ? '&peer=' + PEER : '') + (MQTT ? '&mqtt=' + encodeURIComponent(MQTT) : '');
+
+// Relay-Verbindung mit derselben Schnittstelle wie eine PeerJS-Verbindung
+function relayConn(cl, topic, tok, ownTok) {
+  const h = {};
+  return { relay: cl, open: true, metadata: { tok }, on: (ev, f) => { h[ev] = f; }, recv: (m) => h.data?.(m),
+    send(m) { if (this.open && cl.connected) cl.publish(topic, JSON.stringify({ tok: ownTok, m })); }, close() { this.open = false; } };
+}
+function connectBrokers(mqtt, g, onConnect, onMsg) {
+  for (const url of BROKERS) {
+    const cl = mqtt.connect(url, { reconnectPeriod: 3000, connectTimeout: 8000, clean: true });
+    clients.push(cl);
+    cl.on('connect', () => g === gen && onConnect(cl));
+    cl.on('message', (_, buf) => { if (g !== gen) return; let d; try { d = JSON.parse(buf); } catch { return; } if (d && typeof d.tok === 'string') onMsg(cl, d); });
+    cl.on('error', (e) => console.warn('Relay', url, e?.message));
+  }
+}
 
 function attach(c, g) {
   conn = c; heard = Date.now();
@@ -198,68 +228,101 @@ function lost() {
 function onData(m) {
   if (!Array.isArray(m)) return;
   if (mode === 'host' && m[0] === 'act' && m[1] && typeof m[1] === 'object') doAct(m[1], 2);
+  if (mode === 'host' && m[0] === 'hello') sendState();
   if (mode === 'guest' && m[0] === 'state' && m[1]?.pieces) { const first = !S; S = m[1]; retries = 0; if (first || $('game').classList.contains('hidden')) startGame(); else { sel = null; render(); } }
   if (mode === 'guest' && m[0] === 'full') leave('Raum ist schon voll');
 }
 
+// Gastgeber: neuen Mitspieler annehmen (oder ablehnen, wenn schon jemand da ist)
+function accept(c, g) {
+  if (g !== gen) { c.close(); return false; }
+  const tok = c.metadata?.tok;
+  if (online() && tok !== guestTok) { c.send(['full']); setTimeout(() => c.close(), 500); return false; }
+  guestTok = tok; const old = conn; conn = null; if (old !== c) old?.close(); attach(c, g);
+  if (!S) { S = init(1); startGame(); } else { toast('Gegner ist da!'); render(); }
+  sendState(); return true;
+}
+
 async function host() {
-  const g = ++gen; mode = 'host'; me = 1; show('wait'); $('mycode').textContent = '·····'; $('waittxt').textContent = 'Erstelle Raum';
-  let Peer; try { ({ Peer } = await loadPeer()); } catch { return leave('Netzwerk-Bibliothek konnte nicht geladen werden'); }
-  if (g !== gen) return;
-  room = newCode(); peer?.destroy();
-  const pr = peer = new Peer(PFX + room.toLowerCase(), OPTS);
-  let opened = false; guestTok = null; startTicker(g);
-  pr.on('open', () => {
-    if (g !== gen) return;
-    opened = true;
+  drop(); const g = gen; mode = 'host'; me = 1; guestTok = null; room = newCode();
+  show('wait'); $('mycode').textContent = '·····'; $('waittxt').textContent = 'Erstelle Raum';
+  let ready = false;
+  const up = () => {
+    if (g !== gen || ready) return; ready = true;
     $('mycode').textContent = room; $('waittxt').textContent = 'Warte auf Mitspieler';
-    history.replaceState(null, '', '?room=' + room + (PEER ? '&peer=' + PEER : ''));
-  });
+    history.replaceState(null, '', roomUrl(room));
+  };
+  setTimeout(() => g === gen && !ready && leave('Keine Verbindung zum Server – Internet prüfen'), 15000);
+  startTicker(g);
+  loadMqtt().then((mqtt) => {
+    if (g !== gen) return;
+    connectBrokers(mqtt, g, (cl) => { cl.subscribe(TOPIC(room) + '/h', (err) => !err && up()); }, (cl, d) => {
+      if (conn?.relay === cl && conn.metadata.tok === d.tok) return conn.recv(d.m);
+      const c = relayConn(cl, TOPIC(room) + '/g/' + d.tok, d.tok, 'host');
+      if (accept(c, g)) c.recv(d.m);
+    });
+  }, () => console.warn('MQTT nicht ladbar'));
+  if (!hasRTC) return;
+  let Peer; try { ({ Peer } = await loadPeer()); } catch { return; }
+  if (g !== gen) return;
+  const pr = peer = new Peer(PFX + room.toLowerCase(), OPTS);
+  pr.on('open', up);
   pr.on('error', (e) => {
     if (g !== gen) return;
-    if (e.type === 'unavailable-id') return host(); // Code schon vergeben: neuen würfeln
-    if (!opened) leave('Verbindungsfehler: ' + e.type); else console.warn('P2P', e.type); // danach verbindet der Ticker neu
+    if (e.type === 'unavailable-id' && !ready) return host(); // Code schon vergeben: neuen würfeln
+    console.warn('P2P', e.type); // danach verbindet der Ticker neu
   });
-  pr.on('connection', (c) => {
-    c.on('open', () => {
-      if (g !== gen) return c.close();
-      const tok = c.metadata?.tok;
-      if (online() && tok !== guestTok) { c.send(['full']); return setTimeout(() => c.close(), 500); }
-      guestTok = tok; conn?.close(); attach(c, g);
-      if (!S) { S = init(1); startGame(); } else { toast('Gegner ist da!'); render(); }
-      sendState();
-    });
-  });
+  pr.on('connection', (c) => c.on('open', () => accept(c, g)));
 }
 
 async function join(code, retry = false) {
   code = String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (code.length !== 5) return void ($('err').textContent = 'Der Code hat 5 Zeichen');
-  const g = ++gen; mode = 'guest'; me = 2; room = code;
+  drop(); const g = gen; mode = 'guest'; me = 2; room = code;
   if (!retry) { show('wait'); $('mycode').textContent = code; $('waittxt').textContent = 'Verbinde'; }
-  let Peer; try { ({ Peer } = await loadPeer()); } catch { return leave('Netzwerk-Bibliothek konnte nicht geladen werden'); }
-  if (g !== gen) return;
-  peer?.destroy();
-  const pr = peer = new Peer(OPTS);
+  let to, failed = false, broker = false;
   const fail = (msg) => {
-    if (g !== gen) return; clearTimeout(to); pr.destroy();
+    if (g !== gen || failed) return; failed = true; clearTimeout(to);
     if (S && ++retries <= 10) return setTimeout(() => g === gen && join(code, true), 3000);
     leave(msg);
   };
-  const to = setTimeout(() => fail('Keine Antwort vom Raum'), 15000);
+  const done = (c) => { if (g !== gen) return; clearTimeout(to); attach(c, g); startTicker(g); history.replaceState(null, '', roomUrl(code)); c.send(['hello']); };
+
+  const viaRelay = async () => {
+    let mqtt; try { mqtt = await loadMqtt(); } catch { return fail('Keine Verbindung möglich'); }
+    if (g !== gen) return;
+    peer?.destroy(); peer = null;
+    to = setTimeout(() => fail(broker ? 'Raum nicht gefunden' : 'Keine Verbindung zum Server – Internet prüfen'), 12000);
+    connectBrokers(mqtt, g, (cl) => {
+      if (broker) return; // nur über den ersten erreichbaren Broker reden, der Gastgeber hört auf allen
+      broker = true; clients.filter(x => x !== cl).forEach(x => x.end(true)); clients = [cl];
+      cl.subscribe(TOPIC(code) + '/g/' + myTok, (err) => !err && cl.publish(TOPIC(code) + '/h', JSON.stringify({ tok: myTok, m: ['hello'] })));
+    }, (cl, d) => {
+      if (!conn) done(relayConn(cl, TOPIC(code) + '/h', 'host', myTok));
+      if (conn?.relay === cl) conn.recv(d.m);
+    });
+  };
+  if (!hasRTC) return viaRelay();
+
+  let Peer; try { ({ Peer } = await loadPeer()); } catch { return viaRelay(); }
+  if (g !== gen) return;
+  const pr = peer = new Peer(OPTS);
+  let switched = false;
+  const toRelay = () => { if (g !== gen || switched || conn) return; switched = true; clearTimeout(to); viaRelay(); };
+  to = setTimeout(toRelay, 10000);
   pr.on('open', () => {
     if (g !== gen) return;
     const c = pr.connect(PFX + code.toLowerCase(), { reliable: true, metadata: { tok: myTok } });
-    c.on('open', () => { if (g !== gen) return; clearTimeout(to); attach(c, g); startTicker(g); history.replaceState(null, '', '?room=' + code + (PEER ? '&peer=' + PEER : '')); c.send(['hello']); });
+    c.on('open', () => !switched && done(c));
   });
-  pr.on('error', (e) => fail(e.type === 'peer-unavailable' ? 'Raum nicht gefunden' : 'Verbindungsfehler: ' + e.type));
+  pr.on('error', toRelay); // auch „Raum nicht gefunden“: Gastgeber hat evtl. nur das Relay
 }
 
 // ---------- Knöpfe ----------
 $('create').onclick = () => { tone(440, 0.08); host(); };
 $('join').onclick = () => { tone(440, 0.08); join($('codein').value); };
 $('codein').onkeydown = (e) => e.key === 'Enter' && join($('codein').value);
-$('local').onclick = () => { gen++; mode = 'local'; me = 0; S = init(1); startGame(); };
+$('local').onclick = () => { drop(); mode = 'local'; me = 0; S = init(1); startGame(); };
 $('cancel').onclick = () => leave();
 $('leave').onclick = $('leave2').onclick = () => leave();
 $('copy').onclick = async () => {
