@@ -19,3 +19,6 @@ for (let g = 0; g < 300; g++) {
   }
 }
 console.log('ok');
+{ const { spare } = await import('./rules.js');
+  let t = init(); for (const [p, pl] of [[0,1],[21,2],[1,1],[22,2],[2,1]]) t = apply(t, { t: 'place', p }, pl);
+  const u = spare(t); assert(u && !u.remove && u.turn === 2 && board(u)[21] === 2 && spare(u) === null); console.log('spare ok'); }

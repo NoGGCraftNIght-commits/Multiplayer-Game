@@ -74,7 +74,7 @@ function render() {
     if (k.p === -2) {
       if (old >= 0) {
         const [x, y] = pos(old); restart(el, 'dead'); burst(x, y, ['#ff4d8d', '#ffcf5c', '#fff', k.o === 1 ? '#fffaf0' : '#8a81b0'], 22);
-        tone(500, 0.35, 'sawtooth', 0.08, 50); setTimeout(() => S.pieces[i].p === -2 && el.classList.add('gone'), 560);
+        tone(500, 0.35, 'sawtooth', 0.08, 50); setTimeout(() => S?.pieces[i].p === -2 && el.classList.add('gone'), 560);
       } else if (!el.classList.contains('dead')) el.classList.add('gone');
       return;
     }
@@ -83,7 +83,7 @@ function render() {
     el.classList.toggle('hand', k.p < 0);
     if (prev && old !== k.p) {
       restart(el, 'fly'); el.classList.remove('land');
-      if (k.p >= 0) setTimeout(() => { if (S.pieces[i].p !== k.p) return; el.classList.remove('fly'); restart(el, 'land'); ripple(x, y); tone(180, 0.1, 'triangle', 0.2); tone(90, 0.08, 'sine', 0.2); }, 600);
+      if (k.p >= 0) setTimeout(() => { if (S?.pieces[i].p !== k.p) return; el.classList.remove('fly'); restart(el, 'land'); ripple(x, y); tone(180, 0.1, 'triangle', 0.2); tone(90, 0.08, 'sine', 0.2); }, 600);
     }
     place(el, x, y);
   });
@@ -92,7 +92,7 @@ function render() {
   const millNew = S.remove && !prev?.remove;
   if (!S.remove) $('millfx').innerHTML = '';
   if (millNew) setTimeout(() => {
-    if (!S.remove) return;
+    if (!S?.remove) return;
     const [a, c] = [pos(S.mill[0]), pos(S.mill[2])];
     $('millfx').innerHTML = `<line class="millline" x1="${a[0]}" y1="${a[1]}" x2="${c[0]}" y2="${c[1]}"/>`;
     S.mill.forEach(p => { const k = S.pieces.findIndex(q => q.p === p); restart(pcs[k], 'inmill'); burst(...pos(p), ['#ff4d8d', '#ffcf5c'], 8); });
@@ -128,7 +128,7 @@ function render() {
   $('roomtag').textContent = mode === 'local' ? 'Lokal' : `Raum ${room} · ${colorName(me)}`;
 
   if (S.winner && !prev?.winner) setTimeout(() => {
-    if (!S.winner) return;
+    if (!S?.winner) return;
     const win = mode === 'local' || S.winner === me;
     $('overtxt').textContent = txt; $('overnote').textContent = '';
     $('over').classList.remove('hidden');

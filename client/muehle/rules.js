@@ -55,3 +55,9 @@ function end(s, pl) {
   if (!s.winner && phase(s, s.turn) !== 'place' && !moves(s, s.turn).length) s.winner = pl; // Gegner eingesperrt
   return s;
 }
+// Verteidiger hat das Duell gewonnen: Mühle verfällt, Stein bleibt, Gegner ist dran
+export function spare(s0) {
+  if (!s0.remove || s0.winner) return null;
+  const s = structuredClone(s0); s.remove = false; s.mill = null;
+  return end(s, s.turn);
+}
